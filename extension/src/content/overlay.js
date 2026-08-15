@@ -25,6 +25,7 @@ const CSS = `
     border-radius: 12px;
     background: rgba(28, 28, 30, 0.92);
     color: rgba(255, 255, 255, 0.92);
+    border: 1px solid rgba(255, 255, 255, 0.18); /* 同系色の背景に溶けないための縁 */
     font-size: 13px;
     line-height: 1.5;
     box-shadow: 0 4px 24px rgba(0, 0, 0, 0.25);
@@ -37,6 +38,7 @@ const CSS = `
     .hint {
       background: rgba(255, 255, 255, 0.95);
       color: rgba(0, 0, 0, 0.82);
+      border-color: rgba(0, 0, 0, 0.12);
       box-shadow: 0 4px 24px rgba(0, 0, 0, 0.15);
     }
   }
@@ -158,6 +160,21 @@ export function createOverlay() {
   }
 
   return {
+    /** 状態通知(計測開始・計測のみモード等)。きらきらなしで静かに出て消える。 */
+    showNotice(text, ms = 3_000) {
+      const el = document.createElement('div');
+      el.className = 'hint';
+      const ring = document.createElement('span');
+      ring.className = 'ring';
+      const body = document.createElement('span');
+      body.textContent = text;
+      el.append(ring, body);
+      shadow.append(el);
+      requestAnimationFrame(() => el.classList.add('show'));
+      setTimeout(() => el.classList.remove('show'), ms);
+      setTimeout(() => el.remove(), ms + 500);
+    },
+
     /** ヒントカードを1枚表示。前のカードが残っていれば置き換える。 */
     showHint(text, { onClick } = {}) {
       dismissHint();

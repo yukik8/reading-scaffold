@@ -139,6 +139,9 @@ const dwellTimer = setInterval(() => {
   if (!isReading()) return;
   localReadMs += SESSION.dwellTickMs;
   report(EventType.DWELL_TICK, { visible_paragraph_range: visibleRange() });
+  // スクロールが起きないページ(短い記事・全段落が最初から画面内)のための
+  // フォールバック: 読んでいる鼓動に合わせて、可視の候補段落からヒントを出す。
+  fireHintFromVisible();
 }, SESSION.dwellTickMs);
 
 // ---- オーバーレイとヒント(θ駆動) ---------------------------------------
@@ -149,6 +152,8 @@ const dwellTimer = setInterval(() => {
 // なった瞬間に表示する。measure-onlyモード(本文検出失敗)ではヒントを出さない。
 
 const overlay = createOverlay();
+const overlayStartedAt = Date.now();
+const HINT_GRACE_MS = 8_000; // 開いた瞬間に光らせない+開始通知と重ねない
 let theta = 0;
 let hintsShown = 0;
 let pendingHintAt = new Set(); // ヒントを出す段落index
@@ -156,12 +161,14 @@ let pendingHintAt = new Set(); // ヒントを出す段落index
 function planHints() {
   pendingHintAt = new Set();
   if (mode !== 'full' || theta <= 0) return;
-  const target = Math.round((theta * totalWords) / 1000);
+  const target = Math.max(1, Math.round((theta * totalWords) / 1000));
   const remaining = Math.max(0, target - hintsShown);
   if (remaining === 0) return;
-  // 最初の段落は除外(開いた瞬間に光らせない)。未読の段落だけが候補。
-  const candidates = [];
+  // 未読の段落を優先候補にする。全段落が既に画面に入っていた場合(短い記事)は
+  // 全段落を候補にする — でないとヒントの出る機会が永遠に来ない。
+  let candidates = [];
   for (let i = Math.max(1, maxDepthIdx + 1); i < paragraphs.length; i += 1) candidates.push(i);
+  if (candidates.length === 0) candidates = paragraphs.map((_, i) => i);
   for (let i = candidates.length - 1; i > 0; i -= 1) {
     const j = Math.floor(Math.random() * (i + 1));
     [candidates[i], candidates[j]] = [candidates[j], candidates[i]];
@@ -169,9 +176,7 @@ function planHints() {
   for (const idx of candidates.slice(0, remaining)) pendingHintAt.add(idx);
 }
 
-function maybeHint(idx) {
-  if (!pendingHintAt.has(idx)) return;
-  if (!isReading()) return; // 読んでいる最中にだけ出す
+function showHint(idx) {
   pendingHintAt.delete(idx);
   hintsShown += 1;
   const { hint_id, text } = pickHint({
@@ -182,6 +187,25 @@ function maybeHint(idx) {
   overlay.showHint(text, {
     onClick: () => report(EventType.HINT_CLICKED, { hint_id }),
   });
+}
+
+/** 主経路: 候補段落が新しく画面に入った瞬間(段落境界)。 */
+function maybeHint(idx) {
+  if (!pendingHintAt.has(idx)) return;
+  if (Date.now() - overlayStartedAt < HINT_GRACE_MS) return; // 候補は残す(後で副経路が拾う)
+  if (!isReading()) return; // 読んでいる最中にだけ出す
+  showHint(idx);
+}
+
+/** 副経路: dwell tickに合わせて、いま画面内にある候補段落から1つ出す。 */
+function fireHintFromVisible() {
+  if (Date.now() - overlayStartedAt < HINT_GRACE_MS) return;
+  for (const idx of pendingHintAt) {
+    if (visible.has(idx)) {
+      showHint(idx);
+      return; // 1 tickに1枚まで
+    }
+  }
 }
 
 // ---- 片付け ---------------------------------------------------------------
@@ -218,6 +242,14 @@ report('content_ready', {
   paragraph_count: paragraphs.length,
   mode,
 });
+
+// 開始の合図。無言だと動いているかどうかが本人に分からない(診断可能性)。
+if (mode === 'full') {
+  overlay.showNotice(`計測をはじめました(本文 約${totalWords.toLocaleString()}語)`);
+} else {
+  // 設計どおり: 本文検出に失敗したページは補助なしで計測のみ。
+  overlay.showNotice('本文を検出できないため、このページでは計測のみ行います', 4_500);
+}
 
 // θはSWが持っているセッションから受け取る。
 try {
