@@ -249,21 +249,32 @@ report('content_ready', {
   mode,
 });
 
+// θはSWが持っているセッションから受け取る。SW側の保存処理と競走になっても
+// 取りこぼさないよう、セッションが見えるまで少し待って再試行する。
+let sessionInfo = null;
+for (let i = 0; i < 6 && !sessionInfo; i += 1) {
+  try {
+    const res = await chrome.runtime.sendMessage({ type: Msg.GET_STATUS });
+    sessionInfo = res?.session ?? null;
+  } catch {
+    /* SW再起動中など。次の試行に任せる */
+  }
+  if (!sessionInfo) await new Promise((r) => setTimeout(r, 250));
+}
+theta = sessionInfo?.theta ?? 0;
+planHints();
+
 // 開始の合図。無言だと動いているかどうかが本人に分からない(診断可能性)。
-// バージョンを添えるのはドッグフーディング用: どのコードが動いているかを一目で判別する。
+// Level/θ/バージョンを添えるのはドッグフーディング用: どの設定・どのコードで
+// 動いているかを一目で判別する(θ=0でヒントが出ないのは仕様、が見えるように)。
 if (mode === 'full') {
   const ver = chrome.runtime.getManifest?.().version ?? '?';
-  overlay.showNotice(`計測をはじめました(本文 約${totalWords.toLocaleString()}語)· v${ver}`);
+  const lv = sessionInfo ? `Level ${sessionInfo.level}・θ=${theta}` : '設定未取得';
+  overlay.showNotice(
+    `計測をはじめました(本文 約${totalWords.toLocaleString()}語)· ${lv} · v${ver}`,
+    4_000,
+  );
 } else {
   // 設計どおり: 本文検出に失敗したページは補助なしで計測のみ。
   overlay.showNotice('本文を検出できないため、このページでは計測のみ行います', 4_500);
 }
-
-// θはSWが持っているセッションから受け取る。
-try {
-  const res = await chrome.runtime.sendMessage({ type: Msg.GET_STATUS });
-  theta = res?.session?.theta ?? 0;
-} catch {
-  theta = 0;
-}
-planHints();

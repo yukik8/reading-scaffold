@@ -55,12 +55,6 @@ export async function startSession(tabId) {
   const domain = domainOf(tab.url);
   if (!domain) throw new Error('このページでは計測できません');
 
-  // content script注入。モジュールを直接注入できないためローダーを挟む。
-  await chrome.scripting.executeScript({
-    target: { tabId },
-    files: ['src/content/loader.js'],
-  });
-
   const state = await getState();
   const now = Date.now();
   const session = {
@@ -91,6 +85,20 @@ export async function startSession(tabId) {
     level: session.level,
     theta: session.theta,
   });
+
+  // content script注入はセッション保存の後。注入されたスクリプトは起動直後に
+  // GET_STATUSでθを取りに来るため、先に注入するとセッション未保存の瞬間に
+  // 問い合わせが届いて θ=0 になる(ヒントが一枚も出なくなる)。
+  // モジュールを直接注入できないためローダーを挟む。
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      files: ['src/content/loader.js'],
+    });
+  } catch (err) {
+    await setCurrent(null); // 注入できないページ(chrome://等)。セッションを残さない
+    throw err;
+  }
 
   // 無操作・未復帰の監視。SWが止まってもalarmで起こされる。
   await chrome.alarms.create(WATCHDOG_ALARM, { periodInMinutes: 0.5 });
