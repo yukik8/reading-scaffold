@@ -70,9 +70,9 @@ const CSS = `
     position: absolute;
     width: var(--size, 8px);
     height: var(--size, 8px);
-    background: #ffd76a;
+    background: var(--c, #ffd76a);
     clip-path: polygon(50% 0, 62% 38%, 100% 50%, 62% 62%, 50% 100%, 38% 62%, 0 50%, 38% 38%);
-    filter: drop-shadow(0 0 4px rgba(255, 200, 80, 0.95));
+    filter: drop-shadow(0 0 5px var(--c, #ffd76a));
     pointer-events: none;
     opacity: 0;
     animation: sparkle 2s ease-out var(--delay, 0s) forwards;
@@ -134,17 +134,20 @@ const CSS = `
   }
 `;
 
+const STAR_COLORS = ['#ffd76a', '#ffe9a8', '#fff3c4', '#ffc94d'];
+
 function burst(parent, count, { delaySpread = 0.8 } = {}) {
   for (let i = 0; i < count; i += 1) {
     const s = document.createElement('span');
     s.className = 'sparkle';
     // ランダムな点から、外向き+すこし上へ舞う
     const angle = Math.random() * Math.PI * 2;
-    const dist = 30 + Math.random() * 50;
+    const dist = 30 + Math.random() * 70;
     s.style.setProperty('--dx', `${Math.cos(angle) * dist}px`);
-    s.style.setProperty('--dy', `${Math.sin(angle) * dist * 0.6 - 18}px`);
-    s.style.setProperty('--size', `${5 + Math.random() * 9}px`);
+    s.style.setProperty('--dy', `${Math.sin(angle) * dist * 0.6 - 24}px`);
+    s.style.setProperty('--size', `${5 + Math.random() * 13}px`);
     s.style.setProperty('--delay', `${Math.random() * delaySpread}s`);
+    s.style.setProperty('--c', STAR_COLORS[Math.floor(Math.random() * STAR_COLORS.length)]);
     s.style.left = `${Math.random() * 100}%`;
     s.style.top = `${Math.random() * 100}%`;
     parent.append(s);
@@ -152,12 +155,13 @@ function burst(parent, count, { delaySpread = 0.8 } = {}) {
   }
 }
 
-/** 一拍おいて余韻の二波目。「きらきらしている時間」を作る。 */
-function twinkle(parent, count, opts) {
-  burst(parent, count, opts);
-  setTimeout(() => {
-    if (parent.isConnected) burst(parent, Math.ceil(count / 2), opts);
-  }, 1_500);
+/** 波を重ねて「きらきらしている時間」を作る。counts = 各波の星の数。 */
+function shower(parent, counts, interval = 1_200) {
+  counts.forEach((count, i) => {
+    setTimeout(() => {
+      if (parent.isConnected) burst(parent, count, { delaySpread: 1.2 });
+    }, i * interval);
+  });
 }
 
 export function createOverlay() {
@@ -217,8 +221,8 @@ export function createOverlay() {
       });
       shadow.append(el);
       requestAnimationFrame(() => el.classList.add('show'));
-      // 画面全体に星が舞う
-      twinkle(field, 26, { delaySpread: 1.2 });
+      // 画面全体に星が舞う(三波・計約4.5秒)
+      shower(field, [44, 28, 14]);
       hintEl = el;
       hintTimer = setTimeout(dismissHint, 7_000);
     },
@@ -242,7 +246,7 @@ export function createOverlay() {
       shadow.append(wrap);
       requestAnimationFrame(() => wrap.classList.add('show'));
       // お祝いはさらに濃く、画面全体で
-      twinkle(field, 44, { delaySpread: 1.2 });
+      shower(field, [80, 56, 32]);
       setTimeout(() => wrap.classList.remove('show'), 2_100);
       setTimeout(() => wrap.remove(), 2_700);
     },
