@@ -7,16 +7,22 @@
   </head>
   <body>
     <main>
-      <button id="start" type="button">読む</button>
-      <button id="end" type="button" hidden>終える</button>
+      <div id="controls">
+        <button id="start" type="button">読む</button>
+        <button id="end" type="button" hidden>終える</button>
+        <p id="status" hidden></p>
+        <p id="error" hidden></p>
+      </div>
 
       <!-- Mirror: 主表示は補助なし読書時間の週次推移。
            連続日数・他人との比較・目標未達の警告は出さない(責めない原則)。 -->
       <section id="mirror" aria-label="Mirror">
-        <h2>補助なし読書時間</h2>
-        <div id="chart"><!-- TODO(W1): 週次の棒グラフ --></div>
+        <h2>補助なし読書時間(週)</h2>
+        <div id="chart" role="img" aria-label="週ごとの補助なし読書時間"></div>
+        <p id="empty" hidden>まだ記録がありません。読みたいページで「読む」を押すと計測が始まります。</p>
         <dl id="sub">
           <dt>今週のセッション</dt><dd id="sessions">—</dd>
+          <dt>今週の読書時間</dt><dd id="read-min">—</dd>
           <dt>離脱率</dt><dd id="escape-rate">—</dd>
         </dl>
       </section>

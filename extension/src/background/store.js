@@ -1,12 +1,17 @@
 // IndexedDB。生イベントはここにしか置かない。
-// W1: events / sessions / state の3ストアを作り、append と全消去を通す。
+// events(append-only) / sessions(集計キャッシュ) / state(単一レコード) の3ストア。
+
+import { THETA_BY_LEVEL } from '../shared/config.js';
 
 const DB_NAME = 'reading-scaffold';
 const DB_VERSION = 1;
 
+let dbPromise = null;
+
 /** @returns {Promise<IDBDatabase>} */
 export function openDb() {
-  return new Promise((resolve, reject) => {
+  if (dbPromise) return dbPromise;
+  dbPromise = new Promise((resolve, reject) => {
     const req = indexedDB.open(DB_NAME, DB_VERSION);
     req.onupgradeneeded = () => {
       const db = req.result;
@@ -24,32 +29,68 @@ export function openDb() {
       }
     };
     req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
+    req.onerror = () => {
+      dbPromise = null;
+      reject(req.error);
+    };
   });
+  return dbPromise;
+}
+
+function run(storeName, mode, fn) {
+  return openDb().then(
+    (db) =>
+      new Promise((resolve, reject) => {
+        const t = db.transaction(storeName, mode);
+        const req = fn(t.objectStore(storeName));
+        t.oncomplete = () => resolve(req?.result);
+        t.onerror = () => reject(t.error);
+        t.onabort = () => reject(t.error);
+      }),
+  );
 }
 
 /** イベントを1件追記する。append-only。 */
-export async function appendEvent(sessionId, type, payload, t) {
-  // TODO(W1): openDb → transaction('events', 'readwrite') → add({ session_id, t, type, payload })
-  void sessionId; void type; void payload; void t;
+export function appendEvent(sessionId, type, payload, t = Date.now()) {
+  return run('events', 'readwrite', (s) => s.add({ session_id: sessionId, t, type, payload }));
 }
 
 /** セッションの集計キャッシュを書く。 */
-export async function putSession(session) {
-  // TODO(W1): { session_id, date, domain, level, theta, read_ms, escapes, completion_pct, success }
-  void session;
+export function putSession(session) {
+  return run('sessions', 'readwrite', (s) => s.put(session));
 }
 
-/** state(単一レコード)の読み書き。 */
-export async function getState() {
-  // TODO(W1): { level, theta, success_streak, fail_streak, diag_answers, updated_at }
+export function getAllSessions() {
+  return run('sessions', 'readonly', (s) => s.getAll()).then((rows) => rows ?? []);
 }
 
-export async function putState(state) {
-  void state;
+const STATE_KEY = 'singleton';
+
+const DEFAULT_STATE = {
+  key: STATE_KEY,
+  level: 0,
+  theta: THETA_BY_LEVEL[0],
+  success_streak: 0,
+  fail_streak: 0,
+  last_level_change_date: null,
+  diag_answers: null,
+  updated_at: null,
+};
+
+/** state(単一レコード)。無ければ初期値を返す。 */
+export function getState() {
+  return run('state', 'readonly', (s) => s.get(STATE_KEY)).then((row) => row ?? { ...DEFAULT_STATE });
 }
 
-/** データ削除。設定から1タップで呼ぶ。サーバ送信の停止もここで立てる。 */
+export function putState(state) {
+  return run('state', 'readwrite', (s) => s.put({ ...state, key: STATE_KEY, updated_at: Date.now() }));
+}
+
+/** データ削除。設定から1タップで呼ぶ。 */
 export async function wipeAll() {
-  // TODO(W1): 全ストアclear + 送信フラグをoffに
+  await run('events', 'readwrite', (s) => s.clear());
+  await run('sessions', 'readwrite', (s) => s.clear());
+  await run('state', 'readwrite', (s) => s.clear());
+  await chrome.storage.session.clear();
+  await chrome.storage.local.clear();
 }

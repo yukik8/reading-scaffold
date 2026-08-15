@@ -8,45 +8,264 @@
 //   ESCAPED--[復帰なし 3分]--> ENDED(auto)
 //
 // 離脱はセッションを終わらせない。離脱→復帰のパターンが制御器の主要シグナルであるため。
+//
+// 「計測はセッション中のみ」の守り方(設計ドキュメントからの変更):
+// 設計ではtabs系リスナーを開始時に登録・終了時に解除する方式だったが、MV3のService
+// Workerは停止・再起動があり、動的に登録したリスナーは再起動で消えて復帰を取り逃がす。
+// そのため登録はservice-worker.jsのトップレベル(常設)とし、代わりに全ハンドラが
+// このファイルを通り、最初にセッションの存在を確認してから動く。セッションが無ければ
+// 何も読まず何も書かずに戻る。観測コードパスがセッション中しか走らないことは変わらない。
+//
+// セッションの現在値はchrome.storage.sessionに置く(SW再起動を跨いで生き、
+// ブラウザ終了で消える — セッションという意味に合う)。
 
-import { SessionState } from '../shared/events.js';
+import { EventType, EndReason, SessionState } from '../shared/events.js';
+import { SESSION, SUCCESS } from '../shared/config.js';
+import { dateKey } from '../shared/time.js';
+import { appendEvent, putSession, getState } from './store.js';
 
-/**
- * 「計測はセッション中のみ」をここで構造的に保証する。
- * tabs系のリスナーは start() で登録し、end() で必ず解除する。
- * グローバルにリスナーを張らない — このファイルが唯一の登録箇所。
- */
-let current = null; // { session_id, tab_id, state, started_at, read_ms, escapes, listeners }
+const CURRENT_KEY = 'currentSession';
+export const WATCHDOG_ALARM = 'rs-watchdog';
 
-export function getCurrent() {
-  return current;
+export async function getCurrent() {
+  const got = await chrome.storage.session.get(CURRENT_KEY);
+  return got[CURRENT_KEY] ?? null;
 }
 
-/** ユーザージェスチャー起点でのみ呼ばれる。activeTab権限の発動条件を兼ねる。 */
+function setCurrent(session) {
+  if (session === null) return chrome.storage.session.remove(CURRENT_KEY);
+  return chrome.storage.session.set({ [CURRENT_KEY]: session });
+}
+
+function domainOf(url) {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return null;
+  }
+}
+
+/** ユーザージェスチャー起点(popup)でのみ呼ばれる。activeTab権限の発動条件を兼ねる。 */
 export async function startSession(tabId) {
-  // TODO(W1):
-  //   1. session_id採番、state = ACTIVE
-  //   2. chrome.scripting.executeScript で content script を注入
-  //   3. registerListeners() — tabs.onActivated / windows.onFocusChanged / tabs.onRemoved
-  //   4. SESSION_START を追記(url_domainのみ。URL全体は保存しない)
-  void tabId;
+  const existing = await getCurrent();
+  if (existing) await endSession(EndReason.MANUAL);
+
+  const tab = await chrome.tabs.get(tabId);
+  const domain = domainOf(tab.url);
+  if (!domain) throw new Error('このページでは計測できません');
+
+  // content script注入。モジュールを直接注入できないためローダーを挟む。
+  await chrome.scripting.executeScript({
+    target: { tabId },
+    files: ['src/content/loader.js'],
+  });
+
+  const state = await getState();
+  const now = Date.now();
+  const session = {
+    session_id: crypto.randomUUID(),
+    tab_id: tabId,
+    window_id: tab.windowId,
+    // タブ内遷移の判定にだけ使う。storage.session限りで、IndexedDBには書かない。
+    page_url: tab.url.split('#')[0],
+    state: SessionState.ACTIVE,
+    started_at: now,
+    last_event_at: now,
+    escaped_at: null,
+    domain,
+    level: state.level,
+    theta: state.theta,
+    article_len_words: null,
+    mode: null, // 'full' | 'measure-only'(本文検出失敗)
+    read_ms: 0,
+    escapes: 0,
+    completion_pct: 0,
+    hints_shown: 0,
+    effects_shown: 0,
+  };
+  await setCurrent(session);
+  await appendEvent(session.session_id, EventType.SESSION_START, {
+    url_domain: domain,
+    article_len_words: null,
+    level: session.level,
+    theta: session.theta,
+  });
+
+  // 無操作・未復帰の監視。SWが止まってもalarmで起こされる。
+  await chrome.alarms.create(WATCHDOG_ALARM, { periodInMinutes: 0.5 });
+  await chrome.action.setBadgeText({ text: '●' });
+  return session;
 }
 
 export async function endSession(reason) {
-  // TODO(W1):
-  //   1. unregisterListeners() — 例外が出ても必ず通す
-  //   2. read_ms / escapes / completion_pct を確定して SESSION_END を追記
-  //   3. sessions を書き、制御器の onSessionEnd を呼ぶ
-  //   4. current = null
-  void reason;
+  const session = await getCurrent();
+  if (!session || session.state === SessionState.ENDED) return null;
+
+  await chrome.alarms.clear(WATCHDOG_ALARM);
+  await chrome.action.setBadgeText({ text: '' });
+
+  const success =
+    session.read_ms >= SUCCESS.minReadMs && session.escapes <= SUCCESS.maxEscapes;
+
+  await appendEvent(session.session_id, EventType.SESSION_END, {
+    reason,
+    read_ms: session.read_ms,
+    completion_pct: session.completion_pct,
+  });
+  await putSession({
+    session_id: session.session_id,
+    date: dateKey(session.started_at),
+    started_at: session.started_at,
+    domain: session.domain,
+    level: session.level,
+    theta: session.theta,
+    read_ms: session.read_ms,
+    escapes: session.escapes,
+    completion_pct: session.completion_pct,
+    success,
+    // 補助なし判定に使う。W1ではヒントが無いので常に0。
+    hints_shown: session.hints_shown,
+    effects_shown: session.effects_shown,
+  });
+
+  // 制御器の自動昇降はW3で接続する(CONTROLLER.enabled)。
+  // W1で動かすとヒント未実装のままLevelだけが動き、記録が実態と乖離するため。
+
+  // content scriptに片付けを頼む。タブが既に無ければそれでよい。
+  try {
+    await chrome.tabs.sendMessage(session.tab_id, { type: 'rs_stop' });
+  } catch {
+    /* タブclose済み */
+  }
+
+  await setCurrent(null);
+  return { ...session, state: SessionState.ENDED, success, reason };
 }
 
-function registerListeners() {
-  // TODO(W1): 離脱→ESCAPED、復帰→ACTIVE。離脱先はドメイン文字列のみ記録する。
+/** content scriptからの計測報告。送信元がセッションのタブであることを必ず確認する。 */
+export async function onReport(event, payload, sender) {
+  const session = await getCurrent();
+  if (!session || sender.tab?.id !== session.tab_id) return;
+
+  const now = Date.now();
+  session.last_event_at = now;
+
+  switch (event) {
+    case 'content_ready':
+      session.article_len_words = payload.article_len_words;
+      session.mode = payload.mode;
+      break;
+
+    case EventType.DWELL_TICK:
+      // 読書時間の操作的定義に合致した鼓動だけがread_msに積まれる。
+      if (session.state === SessionState.ACTIVE) {
+        session.read_ms += SESSION.dwellTickMs;
+        await appendEvent(session.session_id, EventType.DWELL_TICK, {
+          visible_paragraph_range: payload.visible_paragraph_range ?? null,
+        });
+      }
+      break;
+
+    case EventType.SCROLL:
+      session.completion_pct = Math.max(session.completion_pct, payload.completion_pct ?? 0);
+      await appendEvent(session.session_id, EventType.SCROLL, {
+        depth_pct: payload.depth_pct ?? 0,
+      });
+      break;
+
+    default:
+      return; // 未知の報告は捨てる
+  }
+  await setCurrent(session);
 }
 
-function unregisterListeners() {
-  // TODO(W1): 登録したものを1つ残らず removeListener する。
+/** タブ切替。セッションタブへ戻れば復帰、別タブへ移れば離脱。 */
+export async function onTabActivated(activeInfo) {
+  const session = await getCurrent();
+  if (!session) return;
+
+  if (activeInfo.tabId === session.tab_id) {
+    await returnFromEscape(session);
+  } else {
+    let toDomain = null;
+    try {
+      const tab = await chrome.tabs.get(activeInfo.tabId);
+      toDomain = domainOf(tab.url); // ドメインのみ。URL全体・タイトルは見ない・保存しない
+    } catch {
+      /* 取得できなければ行き先なしで記録 */
+    }
+    await escape(session, toDomain);
+  }
 }
 
-export { SessionState };
+/** ウィンドウのフォーカス移動。全ウィンドウ非フォーカス=OSの別アプリへの離脱。 */
+export async function onWindowFocusChanged(windowId) {
+  const session = await getCurrent();
+  if (!session) return;
+
+  if (windowId === chrome.windows.WINDOW_ID_NONE) {
+    await escape(session, null);
+    return;
+  }
+  try {
+    const [active] = await chrome.tabs.query({ active: true, windowId });
+    if (active?.id === session.tab_id) {
+      await returnFromEscape(session);
+    } else {
+      await escape(session, domainOf(active?.url));
+    }
+  } catch {
+    /* ウィンドウが消えた等は次のイベントに任せる */
+  }
+}
+
+export async function onTabRemoved(tabId) {
+  const session = await getCurrent();
+  if (!session || tabId !== session.tab_id) return;
+  await endSession(EndReason.CLOSE);
+}
+
+/**
+ * セッションタブ内の別ページへの遷移。v0は1セッション=1記事なので終了扱い。
+ * ハッシュだけの変化(記事内の脚注・目次ジャンプ)は遷移とみなさない。
+ */
+export async function onTabUpdated(tabId, changeInfo) {
+  const session = await getCurrent();
+  if (!session || tabId !== session.tab_id || !changeInfo.url) return;
+  if (changeInfo.url.split('#')[0] === session.page_url) return;
+  await endSession(EndReason.CLOSE);
+}
+
+/** 30秒ごとの見回り。無操作3分/復帰なし3分の自動終了はここで判定する。 */
+export async function onWatchdog() {
+  const session = await getCurrent();
+  if (!session) {
+    await chrome.alarms.clear(WATCHDOG_ALARM); // 迷子のalarmを掃除
+    return;
+  }
+  if (Date.now() - session.last_event_at > SESSION.idleTimeoutMs) {
+    await endSession(EndReason.IDLE);
+  }
+}
+
+async function escape(session, toDomain) {
+  if (session.state !== SessionState.ACTIVE) return;
+  session.state = SessionState.ESCAPED;
+  session.escaped_at = Date.now();
+  session.last_event_at = session.escaped_at;
+  session.escapes += 1;
+  await appendEvent(session.session_id, EventType.TAB_ESCAPE, { to_domain: toDomain });
+  await setCurrent(session);
+}
+
+async function returnFromEscape(session) {
+  if (session.state !== SessionState.ESCAPED) return;
+  const now = Date.now();
+  await appendEvent(session.session_id, EventType.TAB_RETURN, {
+    away_ms: now - session.escaped_at,
+  });
+  session.state = SessionState.ACTIVE;
+  session.escaped_at = null;
+  session.last_event_at = now;
+  await setCurrent(session);
+}

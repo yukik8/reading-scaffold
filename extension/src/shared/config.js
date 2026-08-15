@@ -1,4 +1,4 @@
-// タペリング制御器の設定。ドッグフーディング中は手で触る前提で1ファイルに集める。
+// タペリング制御器とセッションの設定。ドッグフーディング中は手で触る前提で1ファイルに集める。
 
 // θ = ヒント・演出の頻度(本文1,000語あたりの表示回数)。
 // 離散段階がそのままLevel 0〜5。目標値は常に配列の末尾(0)であり、これは変えない。
@@ -7,6 +7,11 @@ export const THETA_BY_LEVEL = [8, 5, 3, 1.5, 0.5, 0];
 export const MAX_LEVEL = THETA_BY_LEVEL.length - 1;
 
 export const CONTROLLER = {
+  // W1は計測だけ。自動昇降はW3で有効にする。
+  // W1でLevelを動かすと、ヒントを一度も出していないのにLevelだけ上がり、
+  // 「補助が減った」という記録が実態と合わなくなる。
+  enabled: false,
+
   // 成功がK回続いたらLevelを1段上げる(θを下げる)。本人には通知しない。
   successStreakToPromote: 3,
   // 失敗がL回続いたらLevelを1段下げる(θを上げる)。本人には通知しない。
@@ -23,14 +28,32 @@ export const SESSION = {
   // 読書時間の操作的定義: 本文段落が可視、かつ直近このミリ秒以内に
   // スクロールまたは操作がある時間。
   activityWindowMs: 30_000,
-  // dwellの積算粒度。
-  dwellTickMs: 30_000,
+
+  // dwellの積算粒度。設計ドキュメントは30秒だが20秒に落としている。
+  // MV3のService Workerはメッセージが30秒途切れると停止しうるため、
+  // 30秒ちょうどの間隔だと停止と再起動の境界に当たる。20秒なら鼓動が絶えない。
+  dwellTickMs: 20_000,
+
   // 無操作・未復帰でセッションを自動終了するまでの時間。
   idleTimeoutMs: 3 * 60_000,
+
+  // 本文検出の合格ライン。これを下回るページは「計測のみ」モードにする。
+  minParagraphs: 3,
+  minWords: 200,
 };
 
 // success := read_ms >= 5分 かつ escapes <= 1
 export const SUCCESS = {
   minReadMs: 5 * 60_000,
   maxEscapes: 1,
+};
+
+export const MIRROR = {
+  // 週次グラフに出す週数。
+  weeks: 8,
+  // 補助なし読書時間の定義: ヒントも演出も1回も出さなかったセッションのread_msの合計。
+  // 設計ドキュメントは「Level 4以上のセッション」としているが、これは代理指標で、
+  // Level 4(θ=0.5)でもヒントは出る。実際の表示回数で数えるほうが定義として正確で、
+  // ヒントが未実装のW1でも意味のある数字になる。
+  unassistedRequiresZeroHints: true,
 };

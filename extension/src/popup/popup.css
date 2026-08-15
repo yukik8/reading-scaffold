@@ -15,6 +15,11 @@ main {
   gap: 16px;
 }
 
+#controls {
+  display: grid;
+  gap: 8px;
+}
+
 button {
   font: inherit;
   padding: 8px 12px;
@@ -24,6 +29,18 @@ button {
   cursor: pointer;
 }
 
+#status {
+  margin: 0;
+  font-size: 12px;
+  opacity: 0.7;
+}
+
+#error {
+  margin: 0;
+  font-size: 12px;
+  color: light-dark(#a33, #e88);
+}
+
 h2 {
   margin: 0 0 8px;
   font-size: 13px;
@@ -31,8 +48,57 @@ h2 {
   opacity: 0.7;
 }
 
+/* 週次棒グラフ。上に積むのが補助なし(濃)、下が補助あり(淡)。 */
 #chart {
-  min-height: 96px;
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  gap: 6px;
+  align-items: end;
+  height: 108px;
+}
+
+.col {
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  height: 100%;
+  text-align: center;
+  gap: 2px;
+}
+
+.bar {
+  display: flex;
+  flex-direction: column-reverse;
+  justify-content: flex-start;
+  height: 100%;
+}
+
+.bar .unassisted {
+  background: currentColor;
+  border-radius: 2px 2px 0 0;
+}
+
+.bar .assisted {
+  background: color-mix(in srgb, currentColor 30%, transparent);
+  border-radius: 2px 2px 0 0;
+}
+
+.value {
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.7;
+  align-self: end;
+}
+
+.label {
+  font-size: 10px;
+  opacity: 0.5;
+}
+
+#empty {
+  margin: 0;
+  font-size: 12px;
+  opacity: 0.7;
 }
 
 #sub {
@@ -60,5 +126,7 @@ footer {
 
 footer button {
   font-size: 12px;
-  opacity: 0.7;
+  border: none;
+  padding: 4px 0;
+  opacity: 0.6;
 }
