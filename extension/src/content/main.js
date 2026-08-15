@@ -5,10 +5,16 @@
 //   - 本文は読み取りのみ。再構成・広告除去はしない。
 //   - service workerへ送るのは計測値だけ。本文テキストは送らない(LLM経路はv0後半)。
 
-const { Msg, EventType } = await import(chrome.runtime.getURL('src/shared/events.js'));
-const { SESSION } = await import(chrome.runtime.getURL('src/shared/config.js'));
-const { createOverlay } = await import(chrome.runtime.getURL('src/content/overlay.js'));
-const { pickHint } = await import(chrome.runtime.getURL('src/content/hints.js'));
+// loader.jsが付けたキャッシュ割りクエリ(?t=...)を配下のモジュールにも伝播させる。
+// これがないと、拡張をリロードしても開きっぱなしのページでは古いモジュールが
+// ページのモジュールキャッシュから使われ続ける(overlay/hintsだけ更新されない事故)。
+const v = new URL(import.meta.url).search;
+const mod = (path) => import(chrome.runtime.getURL(path) + v);
+
+const { Msg, EventType } = await mod('src/shared/events.js');
+const { SESSION } = await mod('src/shared/config.js');
+const { createOverlay } = await mod('src/content/overlay.js');
+const { pickHint } = await mod('src/content/hints.js');
 
 // ---- 本文検出(読み取り専用) --------------------------------------------
 
@@ -244,8 +250,10 @@ report('content_ready', {
 });
 
 // 開始の合図。無言だと動いているかどうかが本人に分からない(診断可能性)。
+// バージョンを添えるのはドッグフーディング用: どのコードが動いているかを一目で判別する。
 if (mode === 'full') {
-  overlay.showNotice(`計測をはじめました(本文 約${totalWords.toLocaleString()}語)`);
+  const ver = chrome.runtime.getManifest?.().version ?? '?';
+  overlay.showNotice(`計測をはじめました(本文 約${totalWords.toLocaleString()}語)· v${ver}`);
 } else {
   // 設計どおり: 本文検出に失敗したページは補助なしで計測のみ。
   overlay.showNotice('本文を検出できないため、このページでは計測のみ行います', 4_500);
