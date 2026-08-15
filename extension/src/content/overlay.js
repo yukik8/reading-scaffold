@@ -57,21 +57,25 @@ const CSS = `
     opacity: 0.7;
   }
 
-  /* きらきら。カードの周囲に小さな粒が散る */
+  /* きらきら。カードの縁から金色の四芒星が舞い上がって瞬く */
   .sparkle {
     position: absolute;
-    width: 5px;
-    height: 5px;
-    border-radius: 50%;
-    background: currentColor;
+    width: var(--size, 8px);
+    height: var(--size, 8px);
+    background: #ffd76a;
+    clip-path: polygon(50% 0, 62% 38%, 100% 50%, 62% 62%, 50% 100%, 38% 62%, 0 50%, 38% 38%);
+    filter: drop-shadow(0 0 4px rgba(255, 200, 80, 0.95));
     pointer-events: none;
     opacity: 0;
-    animation: sparkle 0.9s ease-out forwards;
+    animation: sparkle 2s ease-out var(--delay, 0s) forwards;
   }
   @keyframes sparkle {
-    0%   { opacity: 0; transform: translate(0, 0) scale(0.4); }
-    25%  { opacity: 0.9; }
-    100% { opacity: 0; transform: translate(var(--dx), var(--dy)) scale(0); }
+    0%   { opacity: 0; transform: translate(0, 0) rotate(0deg) scale(0.2); }
+    15%  { opacity: 1; transform: translate(calc(var(--dx) * 0.3), calc(var(--dy) * 0.3)) rotate(60deg) scale(1.1); }
+    35%  { opacity: 0.5; }
+    55%  { opacity: 1; transform: translate(calc(var(--dx) * 0.7), calc(var(--dy) * 0.7)) rotate(150deg) scale(0.9); }
+    75%  { opacity: 0.4; }
+    100% { opacity: 0; transform: translate(var(--dx), var(--dy)) rotate(220deg) scale(0.1); }
   }
 
   /* 読了お祝い(セッション成功時のみ・数秒で消える) */
@@ -122,20 +126,30 @@ const CSS = `
   }
 `;
 
-function burst(parent, count) {
+function burst(parent, count, { delaySpread = 0.8 } = {}) {
   for (let i = 0; i < count; i += 1) {
     const s = document.createElement('span');
     s.className = 'sparkle';
+    // カードの縁のランダムな点から、外向き+すこし上へ舞う
     const angle = Math.random() * Math.PI * 2;
-    const dist = 24 + Math.random() * 36;
+    const dist = 30 + Math.random() * 50;
     s.style.setProperty('--dx', `${Math.cos(angle) * dist}px`);
-    s.style.setProperty('--dy', `${Math.sin(angle) * dist}px`);
-    s.style.left = `${20 + Math.random() * 60}%`;
-    s.style.top = `${20 + Math.random() * 60}%`;
-    s.style.animationDelay = `${Math.random() * 0.25}s`;
+    s.style.setProperty('--dy', `${Math.sin(angle) * dist * 0.6 - 18}px`);
+    s.style.setProperty('--size', `${5 + Math.random() * 6}px`);
+    s.style.setProperty('--delay', `${Math.random() * delaySpread}s`);
+    s.style.left = `${Math.random() * 100}%`;
+    s.style.top = `${Math.random() * 100}%`;
     parent.append(s);
-    setTimeout(() => s.remove(), 1400);
+    setTimeout(() => s.remove(), (2 + delaySpread) * 1000 + 200);
   }
+}
+
+/** 一拍おいて余韻の二波目。「きらきらしている時間」を作る。 */
+function twinkle(parent, count) {
+  burst(parent, count);
+  setTimeout(() => {
+    if (parent.isConnected) burst(parent, Math.ceil(count / 2));
+  }, 1_500);
 }
 
 export function createOverlay() {
@@ -191,7 +205,7 @@ export function createOverlay() {
       });
       shadow.append(el);
       requestAnimationFrame(() => el.classList.add('show'));
-      burst(el, 7);
+      twinkle(el, 14);
       hintEl = el;
       hintTimer = setTimeout(dismissHint, 7_000);
     },
@@ -214,7 +228,7 @@ export function createOverlay() {
       wrap.append(card);
       shadow.append(wrap);
       requestAnimationFrame(() => wrap.classList.add('show'));
-      burst(card, 14);
+      twinkle(card, 22);
       setTimeout(() => wrap.classList.remove('show'), 2_100);
       setTimeout(() => wrap.remove(), 2_700);
     },
