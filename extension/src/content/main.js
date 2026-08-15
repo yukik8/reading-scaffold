@@ -1,19 +1,21 @@
 // セッション中だけ動くcontent scriptの本体(loader.js経由で注入される)。
 //
 // このファイルの制約:
-//   - ページDOMを変更しない。追加してよいのはShadow DOMに閉じたオーバーレイだけ(W2)。
+//   - ページDOMを変更しない。追加してよいのはShadow DOMに閉じたオーバーレイだけ。
 //   - 本文は読み取りのみ。再構成・広告除去はしない。
 //   - service workerへ送るのは計測値だけ。本文テキストは送らない(LLM経路はv0後半)。
 
 const { Msg, EventType } = await import(chrome.runtime.getURL('src/shared/events.js'));
 const { SESSION } = await import(chrome.runtime.getURL('src/shared/config.js'));
+const { createOverlay } = await import(chrome.runtime.getURL('src/content/overlay.js'));
+const { pickHint } = await import(chrome.runtime.getURL('src/content/hints.js'));
 
 // ---- 本文検出(読み取り専用) --------------------------------------------
 
 // 語数の見積もり: ラテン文字は空白区切り、CJKは文字数で数える。
 function countWords(text) {
   const latin = text.match(/[A-Za-z0-9]+(?:[''-][A-Za-z0-9]+)*/g)?.length ?? 0;
-  const cjk = text.match(/[぀-ヿ㐀-鿿豈-﫿]/g)?.length ?? 0;
+  const cjk = text.match(/[぀-ヿ㐀-鿿豈-﫿]/g)?.length ?? 0;
   return latin + cjk;
 }
 
@@ -54,6 +56,7 @@ const observer = new IntersectionObserver(
       if (e.isIntersecting) {
         visible.add(idx);
         if (idx > maxDepthIdx) maxDepthIdx = idx;
+        maybeHint(idx);
       } else {
         visible.delete(idx);
       }
@@ -129,26 +132,84 @@ function isReading() {
   return visible.size > 0;
 }
 
+let localReadMs = 0; // ヒント文面用のローカル概算(正はSW側)
+
 const dwellTimer = setInterval(() => {
   if (document.hidden) return; // 非表示タブの鼓動はSW側の状態機械と二重計上になるため送らない
   if (!isReading()) return;
+  localReadMs += SESSION.dwellTickMs;
   report(EventType.DWELL_TICK, { visible_paragraph_range: visibleRange() });
 }, SESSION.dwellTickMs);
 
+// ---- オーバーレイとヒント(θ駆動) ---------------------------------------
+//
+// θ = 本文1,000語あたりの表示回数。目標表示回数 = θ × totalWords / 1000。
+// タイミングは「段落境界の候補点から乱数で選ぶ」折衷案(設計 Open Question #3):
+// 未読の段落indexからランダムに選んだ集合に印を付け、その段落が初めて可視に
+// なった瞬間に表示する。measure-onlyモード(本文検出失敗)ではヒントを出さない。
+
+const overlay = createOverlay();
+let theta = 0;
+let hintsShown = 0;
+let pendingHintAt = new Set(); // ヒントを出す段落index
+
+function planHints() {
+  pendingHintAt = new Set();
+  if (mode !== 'full' || theta <= 0) return;
+  const target = Math.round((theta * totalWords) / 1000);
+  const remaining = Math.max(0, target - hintsShown);
+  if (remaining === 0) return;
+  // 最初の段落は除外(開いた瞬間に光らせない)。未読の段落だけが候補。
+  const candidates = [];
+  for (let i = Math.max(1, maxDepthIdx + 1); i < paragraphs.length; i += 1) candidates.push(i);
+  for (let i = candidates.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [candidates[i], candidates[j]] = [candidates[j], candidates[i]];
+  }
+  for (const idx of candidates.slice(0, remaining)) pendingHintAt.add(idx);
+}
+
+function maybeHint(idx) {
+  if (!pendingHintAt.has(idx)) return;
+  if (!isReading()) return; // 読んでいる最中にだけ出す
+  pendingHintAt.delete(idx);
+  hintsShown += 1;
+  const { hint_id, text } = pickHint({
+    pct: completionPct(),
+    min: Math.max(1, Math.round(localReadMs / 60_000)),
+  });
+  report(EventType.HINT_SHOWN, { hint_id, kind: 'canned' });
+  overlay.showHint(text, {
+    onClick: () => report(EventType.HINT_CLICKED, { hint_id }),
+  });
+}
+
 // ---- 片付け ---------------------------------------------------------------
 
-function stop() {
+function stop({ celebrate = false, readMin = 0 } = {}) {
   clearInterval(dwellTimer);
   observer.disconnect();
   for (const [type, fn] of listeners) removeEventListener(type, fn);
   for (const p of paragraphs) delete p.dataset.rsIdx;
   window.__readingScaffoldLoaded = false;
+  if (celebrate) {
+    overlay.celebrate(readMin);
+    setTimeout(() => overlay.destroy(), 2_800);
+  } else {
+    overlay.destroy();
+  }
 }
 
 chrome.runtime.onMessage.addListener((msg) => {
-  if (msg?.type === 'rs_stop') stop();
+  if (msg?.type === 'rs_stop') {
+    stop({ celebrate: msg.celebrate === true, readMin: msg.read_min ?? 0 });
+  } else if (msg?.type === 'rs_theta') {
+    // θ手動ダイヤル(popup)からの即時反映。
+    theta = msg.theta ?? 0;
+    planHints();
+  }
 });
-addEventListener('pagehide', stop, { once: true });
+addEventListener('pagehide', () => stop(), { once: true });
 
 // ---- 開始報告 -------------------------------------------------------------
 
@@ -157,3 +218,12 @@ report('content_ready', {
   paragraph_count: paragraphs.length,
   mode,
 });
+
+// θはSWが持っているセッションから受け取る。
+try {
+  const res = await chrome.runtime.sendMessage({ type: Msg.GET_STATUS });
+  theta = res?.session?.theta ?? 0;
+} catch {
+  theta = 0;
+}
+planHints();

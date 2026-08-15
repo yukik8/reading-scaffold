@@ -119,6 +119,18 @@ h2 {
   font-variant-numeric: tabular-nums;
 }
 
+#assist input[type='range'] {
+  width: 100%;
+  accent-color: currentColor;
+}
+
+#level-label {
+  margin: 4px 0 0;
+  font-size: 12px;
+  opacity: 0.7;
+  font-variant-numeric: tabular-nums;
+}
+
 footer {
   border-top: 1px solid color-mix(in srgb, currentColor 15%, transparent);
   padding-top: 12px;

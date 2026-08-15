@@ -20,9 +20,10 @@
 // ブラウザ終了で消える — セッションという意味に合う)。
 
 import { EventType, EndReason, SessionState } from '../shared/events.js';
-import { SESSION, SUCCESS } from '../shared/config.js';
+import { SESSION, SUCCESS, MAX_LEVEL } from '../shared/config.js';
 import { dateKey } from '../shared/time.js';
-import { appendEvent, putSession, getState } from './store.js';
+import { appendEvent, putSession, getState, putState } from './store.js';
+import { thetaFor } from './controller.js';
 
 const CURRENT_KEY = 'currentSession';
 export const WATCHDOG_ALARM = 'rs-watchdog';
@@ -107,6 +108,16 @@ export async function endSession(reason) {
   const success =
     session.read_ms >= SUCCESS.minReadMs && session.escapes <= SUCCESS.maxEscapes;
 
+  // 読了お祝いは「セッション成功、かつθ>0」のときだけ。演出もθの配下にあり、
+  // Level 5(θ=0)では何も出さない — 補助なし読書時間の定義を汚さないため。
+  const celebrate = success && session.theta > 0;
+  if (celebrate) {
+    session.effects_shown += 1;
+    await appendEvent(session.session_id, EventType.EFFECT_SHOWN, {
+      effect_id: 'session_success',
+    });
+  }
+
   await appendEvent(session.session_id, EventType.SESSION_END, {
     reason,
     read_ms: session.read_ms,
@@ -133,7 +144,11 @@ export async function endSession(reason) {
 
   // content scriptに片付けを頼む。タブが既に無ければそれでよい。
   try {
-    await chrome.tabs.sendMessage(session.tab_id, { type: 'rs_stop' });
+    await chrome.tabs.sendMessage(session.tab_id, {
+      type: 'rs_stop',
+      celebrate,
+      read_min: Math.round(session.read_ms / 60_000),
+    });
   } catch {
     /* タブclose済み */
   }
@@ -170,6 +185,20 @@ export async function onReport(event, payload, sender) {
       session.completion_pct = Math.max(session.completion_pct, payload.completion_pct ?? 0);
       await appendEvent(session.session_id, EventType.SCROLL, {
         depth_pct: payload.depth_pct ?? 0,
+      });
+      break;
+
+    case EventType.HINT_SHOWN:
+      session.hints_shown += 1;
+      await appendEvent(session.session_id, EventType.HINT_SHOWN, {
+        hint_id: payload.hint_id,
+        kind: payload.kind ?? 'canned',
+      });
+      break;
+
+    case EventType.HINT_CLICKED:
+      await appendEvent(session.session_id, EventType.HINT_CLICKED, {
+        hint_id: payload.hint_id,
       });
       break;
 
@@ -246,6 +275,31 @@ export async function onWatchdog() {
   if (Date.now() - session.last_event_at > SESSION.idleTimeoutMs) {
     await endSession(EndReason.IDLE);
   }
+}
+
+/**
+ * θ手動ダイヤル(ドッグフーディング用、W3で自動化)。
+ * 進行中のセッションがあれば即時反映する — 「θを変えると読書体験が変わる」の確認用。
+ */
+export async function setLevel(level) {
+  const clamped = Math.min(Math.max(Math.round(level), 0), MAX_LEVEL);
+  const state = await getState();
+  state.level = clamped;
+  state.theta = thetaFor(clamped);
+  await putState(state);
+
+  const session = await getCurrent();
+  if (session) {
+    session.level = clamped;
+    session.theta = state.theta;
+    await setCurrent(session);
+    try {
+      await chrome.tabs.sendMessage(session.tab_id, { type: 'rs_theta', theta: state.theta });
+    } catch {
+      /* タブが応答しなければ次のセッションから効く */
+    }
+  }
+  return { level: clamped, theta: state.theta };
 }
 
 async function escape(session, toDomain) {

@@ -4,5 +4,8 @@
 (() => {
   if (window.__readingScaffoldLoaded) return;
   window.__readingScaffoldLoaded = true;
-  import(chrome.runtime.getURL('src/content/main.js'));
+  // クエリでモジュールキャッシュを割る: 同じページで2回目のセッションを始めたとき、
+  // キャッシュ済みモジュールだとトップレベルが再実行されず計測が始まらない。
+  // main.jsから静的に読む先(shared/overlay/hints)は状態を持たないのでキャッシュのままでよい。
+  import(chrome.runtime.getURL('src/content/main.js') + '?t=' + Date.now());
 })();

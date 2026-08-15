@@ -1,4 +1,5 @@
 import { Msg } from '../shared/events.js';
+import { THETA_BY_LEVEL, MAX_LEVEL } from '../shared/config.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -32,6 +33,21 @@ $('wipe').addEventListener('click', async () => {
   if (!confirm('記録を全部消します。元に戻せません。')) return;
   await send(Msg.WIPE_ALL);
   await render();
+});
+
+function levelText(level) {
+  const theta = THETA_BY_LEVEL[level];
+  const note = level === 0 ? '(補助が最大)' : level === MAX_LEVEL ? '(補助なし)' : '';
+  return `Level ${level}${note} — ヒント頻度 θ=${theta}/1,000語`;
+}
+
+$('level').addEventListener('input', () => {
+  $('level-label').textContent = levelText(Number($('level').value));
+});
+
+$('level').addEventListener('change', async () => {
+  const res = await send(Msg.SET_LEVEL, { level: Number($('level').value) });
+  if (res?.ok) $('level-label').textContent = levelText(res.level);
 });
 
 function drawChart(weeks) {
@@ -76,6 +92,10 @@ async function render() {
     const min = Math.round(session.read_ms / 60_000);
     $('status').textContent = `計測中: ${session.domain}(${min}分)`;
   }
+
+  const level = status?.state?.level ?? 0;
+  $('level').value = String(level);
+  $('level-label').textContent = levelText(level);
 
   const res = await send(Msg.GET_MIRROR);
   if (!res?.ok) return;

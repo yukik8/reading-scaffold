@@ -14,10 +14,11 @@ import {
   onTabRemoved,
   onTabUpdated,
   onWatchdog,
+  setLevel,
   WATCHDOG_ALARM,
 } from './session.js';
 import { buildMirror } from './mirror.js';
-import { wipeAll } from './store.js';
+import { wipeAll, getState } from './store.js';
 
 chrome.tabs.onActivated.addListener((activeInfo) => {
   onTabActivated(activeInfo);
@@ -58,7 +59,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         break;
 
       case Msg.GET_STATUS:
-        sendResponse({ ok: true, session: await getCurrent() });
+        sendResponse({ ok: true, session: await getCurrent(), state: await getState() });
+        break;
+
+      case Msg.SET_LEVEL:
+        sendResponse({ ok: true, ...(await setLevel(msg.level)) });
         break;
 
       case Msg.GET_MIRROR:
