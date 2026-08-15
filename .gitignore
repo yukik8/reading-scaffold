@@ -1,0 +1,16 @@
+.DS_Store
+*.log
+
+# server (v0後半)
+.venv/
+__pycache__/
+*.pyc
+.env
+
+# 拡張のパッケージ
+*.zip
+extension/dist/
+
+# エディタ
+.vscode/
+.idea/

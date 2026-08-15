@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <title>reading-scaffold</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <main>
+      <button id="start" type="button">読む</button>
+      <button id="end" type="button" hidden>終える</button>
+
+      <!-- Mirror: 主表示は補助なし読書時間の週次推移。
+           連続日数・他人との比較・目標未達の警告は出さない(責めない原則)。 -->
+      <section id="mirror" aria-label="Mirror">
+        <h2>補助なし読書時間</h2>
+        <div id="chart"><!-- TODO(W1): 週次の棒グラフ --></div>
+        <dl id="sub">
+          <dt>今週のセッション</dt><dd id="sessions">—</dd>
+          <dt>離脱率</dt><dd id="escape-rate">—</dd>
+        </dl>
+      </section>
+
+      <footer>
+        <button id="wipe" type="button">データを全部消す</button>
+      </footer>
+    </main>
+    <script type="module" src="popup.js"></script>
+  </body>
+</html>
