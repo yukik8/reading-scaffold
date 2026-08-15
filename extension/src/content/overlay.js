@@ -57,7 +57,15 @@ const CSS = `
     opacity: 0.7;
   }
 
-  /* きらきら。カードの縁から金色の四芒星が舞い上がって瞬く */
+  /* きらきらの舞台。画面全体を覆う不可侵レイヤー(クリックは素通し) */
+  .field {
+    position: fixed;
+    inset: 0;
+    z-index: 2147483645;
+    pointer-events: none;
+  }
+
+  /* きらきら。金色の四芒星が舞い上がって瞬く */
   .sparkle {
     position: absolute;
     width: var(--size, 8px);
@@ -130,12 +138,12 @@ function burst(parent, count, { delaySpread = 0.8 } = {}) {
   for (let i = 0; i < count; i += 1) {
     const s = document.createElement('span');
     s.className = 'sparkle';
-    // カードの縁のランダムな点から、外向き+すこし上へ舞う
+    // ランダムな点から、外向き+すこし上へ舞う
     const angle = Math.random() * Math.PI * 2;
     const dist = 30 + Math.random() * 50;
     s.style.setProperty('--dx', `${Math.cos(angle) * dist}px`);
     s.style.setProperty('--dy', `${Math.sin(angle) * dist * 0.6 - 18}px`);
-    s.style.setProperty('--size', `${5 + Math.random() * 6}px`);
+    s.style.setProperty('--size', `${5 + Math.random() * 9}px`);
     s.style.setProperty('--delay', `${Math.random() * delaySpread}s`);
     s.style.left = `${Math.random() * 100}%`;
     s.style.top = `${Math.random() * 100}%`;
@@ -145,10 +153,10 @@ function burst(parent, count, { delaySpread = 0.8 } = {}) {
 }
 
 /** 一拍おいて余韻の二波目。「きらきらしている時間」を作る。 */
-function twinkle(parent, count) {
-  burst(parent, count);
+function twinkle(parent, count, opts) {
+  burst(parent, count, opts);
   setTimeout(() => {
-    if (parent.isConnected) burst(parent, Math.ceil(count / 2));
+    if (parent.isConnected) burst(parent, Math.ceil(count / 2), opts);
   }, 1_500);
 }
 
@@ -159,6 +167,10 @@ export function createOverlay() {
   const style = document.createElement('style');
   style.textContent = CSS;
   shadow.append(style);
+  // きらきら用の全画面レイヤー。クリック・スクロールは素通し。
+  const field = document.createElement('div');
+  field.className = 'field';
+  shadow.append(field);
   document.documentElement.append(host);
 
   let hintEl = null;
@@ -205,7 +217,8 @@ export function createOverlay() {
       });
       shadow.append(el);
       requestAnimationFrame(() => el.classList.add('show'));
-      twinkle(el, 14);
+      // 画面全体に星が舞う
+      twinkle(field, 26, { delaySpread: 1.2 });
       hintEl = el;
       hintTimer = setTimeout(dismissHint, 7_000);
     },
@@ -228,7 +241,8 @@ export function createOverlay() {
       wrap.append(card);
       shadow.append(wrap);
       requestAnimationFrame(() => wrap.classList.add('show'));
-      twinkle(card, 22);
+      // お祝いはさらに濃く、画面全体で
+      twinkle(field, 44, { delaySpread: 1.2 });
       setTimeout(() => wrap.classList.remove('show'), 2_100);
       setTimeout(() => wrap.remove(), 2_700);
     },
