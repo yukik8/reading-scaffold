@@ -350,6 +350,19 @@ function fireHintFromVisible() {
   }
 }
 
+// デモ: ヒント枠を待たず、開始直後からクイズを出しにいく(1問出たら止まる)
+const demoQuizTimer =
+  DEMO.enabled && QUIZ.enabled
+    ? setInterval(() => {
+        if (quizUsed) {
+          clearInterval(demoQuizTimer);
+          return;
+        }
+        if (quizInFlight || mode !== 'full' || maxDepthIdx < 0) return;
+        startQuiz();
+      }, 3_000)
+    : null;
+
 // ---- 常時演出(地のきらきら) ---------------------------------------------
 //
 // 読んでいる間だけ、θに比例した密度で小さな星が漂う。ヒント(離散報酬)とは
@@ -372,6 +385,7 @@ const ambientTimer = AMBIENT.enabled
 function stop({ celebrate = false, readMin = 0 } = {}) {
   clearInterval(dwellTimer);
   if (ambientTimer) clearInterval(ambientTimer);
+  if (demoQuizTimer) clearInterval(demoQuizTimer);
   observer.disconnect();
   removeEventListener('resize', updateTextColumn);
   for (const [type, fn] of listeners) removeEventListener(type, fn);
