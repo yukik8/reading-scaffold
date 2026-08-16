@@ -43,6 +43,7 @@ export const Msg = {
   REPORT: 'report', // content scriptからの計測報告(EventTypeを載せる)
   GET_STATUS: 'get_status',
   GET_MIRROR: 'get_mirror',
+  GET_LIBRARY: 'get_library', // 記録層の一覧(読んだもの+クイズ正答)
   SET_THETA: 'set_theta', // θ手動ダイヤル(連続値。ドッグフーディング用、W3で自動化)
   QUIZ_REQUEST: 'quiz_request', // content→SW: 段落テキストからクイズ生成(SWがサーバへfetch)
   WIPE_ALL: 'wipe_all',

@@ -19,6 +19,7 @@ import {
   WATCHDOG_ALARM,
 } from './session.js';
 import { buildMirror } from './mirror.js';
+import { buildLibrary } from './library.js';
 import { wipeAll, getState, sha256Hex, getQuizByHash, addQuiz } from './store.js';
 import { getCurrent as getCurrentSession } from './session.js';
 
@@ -62,6 +63,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
       case Msg.GET_STATUS:
         sendResponse({ ok: true, session: await getCurrent(), state: await getState() });
+        break;
+
+      case Msg.GET_LIBRARY:
+        sendResponse({ ok: true, library: await buildLibrary() });
         break;
 
       case Msg.SET_THETA:

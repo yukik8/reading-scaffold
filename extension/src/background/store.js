@@ -159,6 +159,14 @@ export function addQuizAttempt(attempt) {
   return run('quiz_attempts', 'readwrite', (s) => s.add(attempt));
 }
 
+export function getAllPages() {
+  return run('pages', 'readonly', (s) => s.getAll()).then((rows) => rows ?? []);
+}
+
+export function getAllQuizAttempts() {
+  return run('quiz_attempts', 'readonly', (s) => s.getAll()).then((rows) => rows ?? []);
+}
+
 // ---- 削除 -----------------------------------------------------------------
 
 /** データ削除。設定から1タップで呼ぶ。記録層(資産)も含めて全消去する。 */

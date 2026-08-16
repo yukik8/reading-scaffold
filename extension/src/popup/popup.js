@@ -81,6 +81,37 @@ function drawChart(weeks) {
   }
 }
 
+function shortDate(t) {
+  if (!t) return '';
+  const d = new Date(t);
+  return `${d.getMonth() + 1}/${d.getDate()}`;
+}
+
+function drawLibrary(items) {
+  const list = $('library');
+  list.textContent = '';
+  for (const item of items) {
+    const li = document.createElement('li');
+    li.title = item.url;
+
+    const title = document.createElement('span');
+    title.className = 'lib-title';
+    title.textContent = item.title || item.domain;
+
+    const meta = document.createElement('span');
+    meta.className = 'lib-meta';
+    const parts = [shortDate(item.last_read_at), item.domain, `${item.total_read_min}分`];
+    if (item.best_completion_pct > 0) parts.push(`${item.best_completion_pct}%`);
+    if (item.quiz.total > 0) parts.push(`クイズ ${item.quiz.correct}/${item.quiz.total}`);
+    meta.textContent = parts.filter(Boolean).join(' · ');
+
+    li.append(title, meta);
+    // 記録は資産: クリックで読み直せる
+    li.addEventListener('click', () => chrome.tabs.create({ url: item.url }));
+    list.append(li);
+  }
+}
+
 async function render() {
   const status = await send(Msg.GET_STATUS);
   const session = status?.session ?? null;
@@ -104,6 +135,11 @@ async function render() {
   $('empty').hidden = hasData;
   $('chart').hidden = !hasData;
   if (hasData) drawChart(mirror.weeks);
+
+  const lib = await send(Msg.GET_LIBRARY);
+  const items = lib?.ok ? lib.library : [];
+  $('library-sec').hidden = items.length === 0;
+  if (items.length > 0) drawLibrary(items);
 
   $('sessions').textContent = String(mirror.this_week.sessions);
   $('read-min').textContent = `${mirror.this_week.read_min}分`;
