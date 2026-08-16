@@ -32,8 +32,16 @@
       <!-- 自立の推移: θ履歴から導く上昇曲線(集中力の成長) -->
       <section aria-label="自立の推移">
         <span class="eyebrow">自立の推移</span>
-        <svg id="growth" viewBox="0 0 600 160" preserveAspectRatio="none" role="img"
-             aria-label="自立度の推移グラフ"></svg>
+        <div id="growth-wrap" class="growth-wrap">
+          <div class="growth-y" aria-hidden="true">
+            <span>100%</span><span>50%</span><span>0%</span>
+          </div>
+          <div class="growth-main">
+            <svg id="growth" viewBox="0 0 600 160" preserveAspectRatio="none" role="img"
+                 aria-label="自立度の推移グラフ"></svg>
+            <div id="growth-x" class="growth-x" aria-hidden="true"></div>
+          </div>
+        </div>
         <p id="growth-empty" class="note" hidden>まだ推移はありません。</p>
       </section>
 

@@ -236,17 +236,16 @@ $('wipe').addEventListener('click', async () => {
 
 // ---- 初期描画 -------------------------------------------------------------
 
-/** 自立の推移。θ日次履歴から上昇曲線を描く(SVG折れ線・金)。 */
+/** 自立の推移。θ日次履歴から上昇曲線を描く(SVG折れ線・金)。目盛りはHTML側。 */
 function drawGrowth(points) {
   const svg = $('growth');
   svg.textContent = '';
   const hasEnough = points.length >= 2;
   $('growth-empty').hidden = hasEnough;
-  svg.style.display = hasEnough ? 'block' : 'none';
+  $('growth-wrap').hidden = !hasEnough;
   if (!hasEnough) return;
 
   const W = 600;
-  const H = 160;
   const padX = 10;
   const top = 14;
   const bottom = 146;
@@ -254,8 +253,8 @@ function drawGrowth(points) {
   const y = (theta) => bottom - independence(theta) * (bottom - top);
   const ns = 'http://www.w3.org/2000/svg';
 
-  // 基準線(0%と100%)
-  for (const [gy] of [[top], [bottom]]) {
+  // 基準線(100% / 50% / 0% — 左の目盛りと対応)
+  for (const gy of [top, (top + bottom) / 2, bottom]) {
     const line = document.createElementNS(ns, 'line');
     line.setAttribute('x1', padX);
     line.setAttribute('x2', W - padX);
@@ -263,6 +262,17 @@ function drawGrowth(points) {
     line.setAttribute('y2', gy);
     line.setAttribute('class', 'growth-grid');
     svg.append(line);
+  }
+
+  // 横軸の目盛り(日付・最大5点を等間隔に)
+  const xAxis = $('growth-x');
+  xAxis.textContent = '';
+  const labelCount = Math.min(5, points.length);
+  for (let k = 0; k < labelCount; k += 1) {
+    const idx = Math.round((k / (labelCount - 1)) * (points.length - 1));
+    const span = document.createElement('span');
+    span.textContent = shortDate(points[idx].t);
+    xAxis.append(span);
   }
 
   const poly = document.createElementNS(ns, 'polyline');
