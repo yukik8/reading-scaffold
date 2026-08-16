@@ -134,7 +134,25 @@ const CSS = `
   }
 `;
 
-const STAR_COLORS = ['#ffd76a', '#ffe9a8', '#fff3c4', '#ffc94d'];
+// 星の色はページの背景の明暗で切り替える。淡い金は白背景に溶けて見えない。
+const STAR_COLORS_DARK_BG = ['#ffd76a', '#ffe9a8', '#fff3c4', '#ffc94d'];
+const STAR_COLORS_LIGHT_BG = ['#d98f00', '#e6a817', '#c77f00', '#f0a92e'];
+
+let starColors = STAR_COLORS_DARK_BG;
+
+function pageIsLight() {
+  for (const el of [document.body, document.documentElement]) {
+    if (!el) continue;
+    const bg = getComputedStyle(el).backgroundColor;
+    const m = bg?.match(/rgba?\(([\d.]+)[, ]+([\d.]+)[, ]+([\d.]+)(?:[,/ ]+([\d.]+))?\)/);
+    if (!m) continue;
+    const alpha = m[4] === undefined ? 1 : parseFloat(m[4]);
+    if (alpha < 0.5) continue; // 透明なら下のレイヤーを見る
+    const lum = 0.2126 * m[1] + 0.7152 * m[2] + 0.0722 * m[3];
+    return lum > 140;
+  }
+  return true; // どちらも透明ならブラウザ既定(白)とみなす
+}
 
 function burst(parent, count, { delaySpread = 0.8, sizeMin = 5, sizeMax = 18 } = {}) {
   for (let i = 0; i < count; i += 1) {
@@ -147,7 +165,7 @@ function burst(parent, count, { delaySpread = 0.8, sizeMin = 5, sizeMax = 18 } =
     s.style.setProperty('--dy', `${Math.sin(angle) * dist * 0.6 - 24}px`);
     s.style.setProperty('--size', `${sizeMin + Math.random() * (sizeMax - sizeMin)}px`);
     s.style.setProperty('--delay', `${Math.random() * delaySpread}s`);
-    s.style.setProperty('--c', STAR_COLORS[Math.floor(Math.random() * STAR_COLORS.length)]);
+    s.style.setProperty('--c', starColors[Math.floor(Math.random() * starColors.length)]);
     s.style.left = `${Math.random() * 100}%`;
     s.style.top = `${Math.random() * 100}%`;
     parent.append(s);
@@ -176,6 +194,7 @@ export function createOverlay() {
   field.className = 'field';
   shadow.append(field);
   document.documentElement.append(host);
+  starColors = pageIsLight() ? STAR_COLORS_LIGHT_BG : STAR_COLORS_DARK_BG;
 
   let hintEl = null;
   let hintTimer = null;
@@ -229,7 +248,7 @@ export function createOverlay() {
 
     /** 地の演出: 読んでいる間に漂う小さな星。ヒントの波より小粒で静か。 */
     ambient(count) {
-      burst(field, count, { delaySpread: 1.0, sizeMin: 4, sizeMax: 9 });
+      burst(field, count, { delaySpread: 1.0, sizeMin: 5, sizeMax: 12 });
     },
 
     /** 読了お祝い。セッション成功時のみ呼ばれる。 */
