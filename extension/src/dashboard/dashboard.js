@@ -5,7 +5,7 @@
 import { Msg } from '../shared/events.js';
 import { THETA_MAX } from '../shared/config.js';
 import { buildMirror } from '../background/mirror.js';
-import { buildLibrary, buildQuizLog, buildTotals } from '../background/library.js';
+import { buildLibrary, buildQuizLog, buildTotals, buildThetaHistory } from '../background/library.js';
 import {
   getState,
   getAllSessions,
@@ -32,6 +32,34 @@ function thetaText(theta) {
   return `θ=${theta.toFixed(1)}/1,000語${note}`;
 }
 
+// 自立度 = 1 − θ/θmax。帯は自立度の節目(白→黄→緑→茶、卒業=黒)。
+// 言葉で褒めない — 色が段位を語る(武道の帯)。
+function independence(theta) {
+  return Math.min(1, Math.max(0, 1 - theta / THETA_MAX));
+}
+
+function rankFor(theta) {
+  if (theta === 0) return { name: '黒', color: '#141210', edge: 'rgba(233,187,99,0.6)' };
+  const i = independence(theta);
+  if (i < 0.25) return { name: '白', color: '#ede6d8', edge: 'rgba(0,0,0,0.3)' };
+  if (i < 0.5) return { name: '黄', color: '#d9b13b', edge: 'rgba(0,0,0,0.25)' };
+  if (i < 0.75) return { name: '緑', color: '#4c7a4f', edge: 'rgba(0,0,0,0.25)' };
+  return { name: '茶', color: '#7a5230', edge: 'rgba(0,0,0,0.25)' };
+}
+
+/** 帯セクションの表示をθから更新する(スライダー含む)。 */
+function renderTheta(theta) {
+  $('theta-label').textContent = thetaText(theta);
+  $('theta').value = String(theta);
+  const rank = rankFor(theta);
+  const belt = $('belt');
+  belt.style.background = rank.color;
+  belt.style.boxShadow = `inset 0 0 0 1px ${rank.edge}`;
+  belt.title = `帯: ${rank.name}`;
+  $('indep-pct').textContent = `${Math.round(independence(theta) * 100)}%`;
+  $('obi-ring').style.left = `${(theta / THETA_MAX) * 100}%`;
+}
+
 // ---- θダイヤル ------------------------------------------------------------
 
 $('theta').addEventListener('input', () => {
@@ -40,7 +68,7 @@ $('theta').addEventListener('input', () => {
 
 $('theta').addEventListener('change', async () => {
   const res = await send(Msg.SET_THETA, { theta: Number($('theta').value) });
-  if (res?.ok) $('theta-label').textContent = thetaText(res.theta);
+  if (res?.ok) renderTheta(res.theta);
 });
 
 // ---- 描画 -----------------------------------------------------------------
@@ -197,6 +225,50 @@ $('wipe').addEventListener('click', async () => {
 
 // ---- 初期描画 -------------------------------------------------------------
 
+/** 自立の推移。θ日次履歴から上昇曲線を描く(SVG折れ線・金)。 */
+function drawGrowth(points) {
+  const svg = $('growth');
+  svg.textContent = '';
+  const hasEnough = points.length >= 2;
+  $('growth-empty').hidden = hasEnough;
+  svg.style.display = hasEnough ? 'block' : 'none';
+  if (!hasEnough) return;
+
+  const W = 600;
+  const H = 160;
+  const padX = 10;
+  const top = 14;
+  const bottom = 146;
+  const x = (i) => padX + (i / (points.length - 1)) * (W - padX * 2);
+  const y = (theta) => bottom - independence(theta) * (bottom - top);
+  const ns = 'http://www.w3.org/2000/svg';
+
+  // 基準線(0%と100%)
+  for (const [gy] of [[top], [bottom]]) {
+    const line = document.createElementNS(ns, 'line');
+    line.setAttribute('x1', padX);
+    line.setAttribute('x2', W - padX);
+    line.setAttribute('y1', gy);
+    line.setAttribute('y2', gy);
+    line.setAttribute('class', 'growth-grid');
+    svg.append(line);
+  }
+
+  const poly = document.createElementNS(ns, 'polyline');
+  poly.setAttribute('points', points.map((p, i) => `${x(i)},${y(p.theta)}`).join(' '));
+  poly.setAttribute('class', 'growth-line');
+  svg.append(poly);
+
+  points.forEach((p, i) => {
+    const dot = document.createElementNS(ns, 'circle');
+    dot.setAttribute('cx', x(i));
+    dot.setAttribute('cy', y(p.theta));
+    dot.setAttribute('r', i === points.length - 1 ? 4.5 : 2.5);
+    dot.setAttribute('class', 'growth-dot');
+    svg.append(dot);
+  });
+}
+
 function drawWeekLine(week) {
   const line = $('week-line');
   line.textContent = '';
@@ -224,8 +296,8 @@ async function render() {
   $('ver').textContent = `v${chrome.runtime.getManifest?.().version ?? '?'}`;
 
   const state = await getState();
-  $('theta').value = String(state.theta);
-  $('theta-label').textContent = thetaText(state.theta);
+  renderTheta(state.theta);
+  drawGrowth(await buildThetaHistory());
 
   const mirror = await buildMirror();
   const hasData = mirror.total_sessions > 0;

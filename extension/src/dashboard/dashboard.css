@@ -134,20 +134,41 @@ h1 {
   font-variant-numeric: tabular-nums;
 }
 
-#theta {
-  -webkit-appearance: none;
-  appearance: none;
-  width: 100%;
-  height: 24px;
-  margin: 10px 0 0;
-  background: none;
-  cursor: pointer;
+/* 段位と自立度 */
+.rank-line {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin: 16px 0 4px;
 }
 
-/* 帯本体: 右(8)ほど金が濃く、左端(0)=卒業へ向かって薄れていく */
-#theta::-webkit-slider-runnable-track {
+.belt {
+  width: 46px;
+  height: 13px;
+  border-radius: 3px;
+  background: #ede6d8;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.3);
+}
+
+.indep b {
+  font-size: 30px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.indep-cap {
+  font-size: 11px;
+  color: var(--muted);
+  margin-left: 8px;
+  letter-spacing: 0.14em;
+}
+
+/* 帯本体(表示のみ): 右(8)ほど金が濃く、左端(0)=卒業へ向かって薄れていく */
+.obi-track {
+  position: relative;
   height: 3px;
   border-radius: 2px;
+  margin-top: 16px;
   background: linear-gradient(
     90deg,
     color-mix(in srgb, var(--gold) 10%, transparent),
@@ -155,26 +176,60 @@ h1 {
   );
 }
 
-/* つまみ=リング */
-#theta::-webkit-slider-thumb {
-  -webkit-appearance: none;
+/* リング=θの現在地。左端(0)に着いたら卒業 */
+.obi-ring {
+  position: absolute;
+  top: 50%;
+  left: 100%;
   width: 16px;
   height: 16px;
-  margin-top: -6.5px;
-  border-radius: 50%;
   border: 1.5px solid var(--gold-bright);
+  border-radius: 50%;
   background: var(--bg);
+  transform: translate(-50%, -50%);
   box-shadow: 0 0 0 3px var(--bg);
+  transition: left 0.8s ease;
 }
 
-#theta:focus-visible {
-  outline: none;
+/* 自立の推移 */
+#growth {
+  width: 100%;
+  height: 160px;
+  display: block;
 }
 
-#theta:focus-visible::-webkit-slider-thumb {
-  box-shadow:
-    0 0 0 3px var(--bg),
-    0 0 0 5px color-mix(in srgb, var(--gold) 55%, transparent);
+.growth-grid {
+  stroke: var(--faint);
+  stroke-width: 1;
+}
+
+.growth-line {
+  fill: none;
+  stroke: var(--gold);
+  stroke-width: 2;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.growth-dot {
+  fill: var(--gold-bright);
+}
+
+/* θ手動上書き(開発用・データ節の折りたたみ) */
+details.override {
+  margin-top: 16px;
+}
+
+details.override summary {
+  font-size: 12px;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+details.override input[type='range'] {
+  width: 100%;
+  margin-top: 10px;
+  accent-color: var(--gold);
 }
 
 .obi-ends {

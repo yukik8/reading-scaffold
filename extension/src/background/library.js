@@ -67,6 +67,29 @@ export async function buildQuizLog() {
     }));
 }
 
+/**
+ * θの推移(日次平均・古い順)。自立の推移グラフの素材。
+ * theta_base(制御器の基準値)を使う — 実効θのノイズを均して傾向だけを見る。
+ */
+export async function buildThetaHistory() {
+  const sessions = await getAllSessions();
+  const byDay = new Map();
+  for (const s of sessions) {
+    const t = s.theta_base ?? s.theta;
+    if (typeof t !== 'number' || !s.started_at) continue;
+    const d = new Date(s.started_at);
+    const key = `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
+    const b = byDay.get(key) ?? { sum: 0, n: 0, t: s.started_at };
+    b.sum += t;
+    b.n += 1;
+    if (s.started_at < b.t) b.t = s.started_at;
+    byDay.set(key, b);
+  }
+  return [...byDay.values()]
+    .sort((a, b) => a.t - b.t)
+    .map((b) => ({ t: b.t, theta: b.sum / b.n }));
+}
+
 /** 累計(ダッシュボード用)。 */
 export async function buildTotals() {
   const [sessions, attempts, pages] = await Promise.all([

@@ -13,16 +13,28 @@
         <span id="ver" class="ver"></span>
       </header>
 
-      <!-- 帯: θの現在地。つまみ=署名のリング。左端(0)に着いたら卒業 -->
-      <section class="obi-sec" aria-label="補助の量">
+      <!-- 帯: 自立度と段位。リングが左端(0)に着いたら卒業=黒帯 -->
+      <section class="obi-sec" aria-label="帯">
         <div class="obi-head">
-          <span class="eyebrow">補助の量</span>
+          <span class="eyebrow">帯</span>
           <span id="theta-label" class="theta-read">—</span>
         </div>
-        <input id="theta" type="range" min="0" max="8" step="0.1" value="8" aria-label="補助量θ" />
+        <div class="rank-line">
+          <span id="belt" class="belt" title="帯"></span>
+          <span class="indep"><b id="indep-pct">—</b><span class="indep-cap">自立度</span></span>
+        </div>
+        <div class="obi-track" aria-hidden="true"><span id="obi-ring" class="obi-ring"></span></div>
         <div class="obi-ends" aria-hidden="true"><span>0</span><span>8</span></div>
-        <p class="note">セッションの成否に応じて自動で漸減します。ダイヤルを動かすと手動で上書きできます。</p>
+        <p class="note">補助はセッションの成否に応じて自動で漸減します。</p>
         <p id="week-line" class="week-line"></p>
+      </section>
+
+      <!-- 自立の推移: θ履歴から導く上昇曲線(集中力の成長) -->
+      <section aria-label="自立の推移">
+        <span class="eyebrow">自立の推移</span>
+        <svg id="growth" viewBox="0 0 600 160" preserveAspectRatio="none" role="img"
+             aria-label="自立度の推移グラフ"></svg>
+        <p id="growth-empty" class="note" hidden>まだ推移はありません。</p>
       </section>
 
       <section aria-label="週次推移">
@@ -57,6 +69,10 @@
         <div class="actions">
           <button id="export" type="button">JSONでエクスポート</button>
         </div>
+        <details class="override">
+          <summary>θを手動で上書き(開発用)</summary>
+          <input id="theta" type="range" min="0" max="8" step="0.1" value="8" aria-label="補助量θ" />
+        </details>
         <div class="danger">
           <p class="danger-note">元に戻せない操作</p>
           <button id="wipe" type="button">データを全部消す</button>
