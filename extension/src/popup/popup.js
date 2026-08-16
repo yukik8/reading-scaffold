@@ -1,5 +1,4 @@
 import { Msg } from '../shared/events.js';
-import { THETA_MAX } from '../shared/config.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -31,20 +30,6 @@ $('end').addEventListener('click', async () => {
 
 $('open-dashboard').addEventListener('click', () => {
   chrome.tabs.create({ url: chrome.runtime.getURL('src/dashboard/dashboard.html') });
-});
-
-function thetaText(theta) {
-  const note = theta === 0 ? '(補助なし)' : theta >= THETA_MAX ? '(補助が最大)' : '';
-  return `θ=${theta.toFixed(1)}/1,000語${note}`;
-}
-
-$('theta').addEventListener('input', () => {
-  $('theta-label').textContent = thetaText(Number($('theta').value));
-});
-
-$('theta').addEventListener('change', async () => {
-  const res = await send(Msg.SET_THETA, { theta: Number($('theta').value) });
-  if (res?.ok) $('theta-label').textContent = thetaText(res.theta);
 });
 
 function drawChart(weeks) {
@@ -120,10 +105,6 @@ async function render() {
     const min = Math.round(session.read_ms / 60_000);
     $('status').textContent = `計測中: ${session.domain}(${min}分)`;
   }
-
-  const theta = status?.state?.theta ?? THETA_MAX;
-  $('theta').value = String(theta);
-  $('theta-label').textContent = thetaText(theta);
 
   const res = await send(Msg.GET_MIRROR);
   if (!res?.ok) return;

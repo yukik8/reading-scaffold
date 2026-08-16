@@ -33,14 +33,8 @@
         <ul id="library"></ul>
       </section>
 
-      <!-- θ手動ダイヤル(連続値・ドッグフーディング用)。W3で自動漸減に置き換わる。 -->
-      <section id="assist" aria-label="補助ダイヤル">
-        <h2>補助の量(手動・後で自動化)</h2>
-        <input id="theta" type="range" min="0" max="8" step="0.1" value="8"
-               aria-label="補助量θ" />
-        <p id="theta-label">—</p>
-      </section>
-
+      <!-- θはW3から自動漸減(セッションの成否で動く)。手動上書きはダッシュボードに。
+           毎日触るpopupにダイヤルを置くと「気づかない漸減」を自分で壊せてしまう -->
       <footer>
         <!-- データ管理(全消去含む)はダッシュボードへ。誤タップ距離を最大化する -->
         <button id="open-dashboard" type="button">ダッシュボード</button>
