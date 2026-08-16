@@ -47,9 +47,12 @@ export const SESSION = {
 // Level 0で最も濃く、Levelが上がると自然に薄まり、Level 5(θ=0)で消える。
 export const AMBIENT = {
   enabled: true,
-  tickMs: 3_000,
-  // 1 tickあたりの星の期待数 = θ × この係数(θ=8なら3秒ごとに約2粒)
-  starsPerTickPerTheta: 0.25,
+  tickMs: 1_500,
+  // 1 tickあたりの星の期待数 = (θ/θmax)² × maxStarsPerTick
+  // 2乗カーブにしているのは、Level 0では惜しみなく(約4粒/1.5秒)、
+  // 中間Levelでは控えめに、卒業間際ではほぼ無音にするため。
+  // 線形だとLevel 4(θ=0.5)でもまだ目についてしまう。
+  maxStarsPerTick: 4,
 };
 
 // success := read_ms >= 5分 かつ escapes <= 1

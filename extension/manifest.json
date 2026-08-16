@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "reading-scaffold (dev)",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "description": "補助が自動で減っていく読書拡張。セッション中のみ読書時間を計測する。",
   "permissions": ["activeTab", "scripting", "tabs", "storage", "alarms"],
   "background": {

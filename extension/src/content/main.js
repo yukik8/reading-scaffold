@@ -12,7 +12,7 @@ const v = new URL(import.meta.url).search;
 const mod = (path) => import(chrome.runtime.getURL(path) + v);
 
 const { Msg, EventType } = await mod('src/shared/events.js');
-const { SESSION, AMBIENT } = await mod('src/shared/config.js');
+const { SESSION, AMBIENT, THETA_BY_LEVEL } = await mod('src/shared/config.js');
 const { createOverlay } = await mod('src/content/overlay.js');
 const { pickHint } = await mod('src/content/hints.js');
 
@@ -224,7 +224,7 @@ const ambientTimer = AMBIENT.enabled
   ? setInterval(() => {
       if (document.hidden || mode !== 'full' || theta <= 0) return;
       if (!isReading()) return; // 読む手が止まっているときに光らせない
-      const expected = theta * AMBIENT.starsPerTickPerTheta;
+      const expected = (theta / THETA_BY_LEVEL[0]) ** 2 * AMBIENT.maxStarsPerTick;
       let n = Math.floor(expected);
       if (Math.random() < expected - n) n += 1; // 端数は確率で1粒
       if (n > 0) overlay.ambient(n);
