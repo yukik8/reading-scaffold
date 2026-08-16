@@ -232,8 +232,17 @@ async function startQuiz() {
   quizUsed = true;
   hintsShown += 1;
   report(EventType.HINT_SHOWN, { hint_id: 'quiz_llm', kind: 'quiz' });
+  // 正解時の演出の強さはθ連動: 低Levelほど盛大に、卒業に向けて静かになる
+  const rewardTier =
+    theta >= QUIZ.jackpotMinTheta ? 'jackpot' : theta >= QUIZ.rainMinTheta ? 'rain' : 'shower';
   overlay.showQuiz(res.quiz, {
-    onAnswer: (correct) => report(EventType.QUIZ_ANSWERED, { correct }),
+    rewardTier,
+    onAnswer: (correct) => {
+      report(EventType.QUIZ_ANSWERED, { correct });
+      if (correct && rewardTier !== 'shower') {
+        report(EventType.EFFECT_SHOWN, { effect_id: `quiz_${rewardTier}` });
+      }
+    },
   });
 }
 

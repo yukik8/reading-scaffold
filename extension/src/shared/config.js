@@ -75,6 +75,12 @@ export const QUIZ = {
   minParagraphsRead: 3,
   endpoint: 'http://127.0.0.1:8787/quiz',
   timeoutMs: 12_000,
+  // 正解時の演出の強さはθに連動(低Levelほど盛大に、卒業に向けて漸減):
+  //   θ >= jackpotMinTheta → 大当たり(予告→縁光→特濃の雨+三波)
+  //   θ >= rainMinTheta   → 金の雨
+  //   それ未満            → 星の二波のみ
+  jackpotMinTheta: 5, // Level 0-1
+  rainMinTheta: 3, // Level 2
 };
 
 // success := read_ms >= 5分 かつ escapes <= 1

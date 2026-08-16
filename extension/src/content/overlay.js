@@ -315,6 +315,52 @@ export function createOverlay() {
   let hintEl = null;
   let hintTimer = null;
 
+  // ---- 内部の演出部品(公開メソッドとクイズ正解処理の両方から使う) ----
+
+  function fireForeshadow() {
+    const f = document.createElement('div');
+    f.className = 'foreshadow';
+    if (starColors === STAR_COLORS_LIGHT_BG) {
+      f.style.setProperty('--fs', 'rgba(217, 143, 0, 0.18)');
+    }
+    field.append(f);
+    setTimeout(() => f.remove(), 1_000);
+  }
+
+  function fireVignette() {
+    const vg = document.createElement('div');
+    vg.className = 'vignette';
+    field.append(vg);
+    setTimeout(() => vg.remove(), 2_000);
+  }
+
+  function fireRain(tier) {
+    if (tier !== 'rare') fireVignette();
+    const count = tier === 'jackpot' ? 130 : tier === 'epic' ? 90 : 45;
+    const sizeSpread = tier === 'jackpot' ? 18 : tier === 'epic' ? 14 : 10;
+    for (let i = 0; i < count; i += 1) {
+      const s = document.createElement('span');
+      s.className = 'rainstar';
+      s.style.setProperty('--c', starColors[Math.floor(Math.random() * starColors.length)]);
+      s.style.setProperty('--size', `${6 + Math.random() * sizeSpread}px`);
+      s.style.setProperty('--dur', `${1.6 + Math.random() * 1.4}s`);
+      s.style.setProperty('--delay', `${Math.random() * (tier === 'jackpot' ? 1.8 : 1.2)}s`);
+      s.style.left = `${Math.random() * 100}%`;
+      field.append(s);
+      setTimeout(() => s.remove(), 5_400);
+    }
+  }
+
+  /** 大当たり。予告→縁光二連→特濃の雨+星の三波。約5秒のウォーー。 */
+  function fireJackpot() {
+    fireForeshadow();
+    setTimeout(() => {
+      fireRain('jackpot');
+      shower(field, [60, 40, 20]);
+      setTimeout(fireVignette, 1_200); // 縁光の二拍目
+    }, 950);
+  }
+
   function dismissHint() {
     if (!hintEl) return;
     const el = hintEl;
@@ -341,38 +387,13 @@ export function createOverlay() {
     },
 
     /** 予告の光。呼んだ側は必ず続けて本演出(rain)を出すこと。 */
-    foreshadow() {
-      const f = document.createElement('div');
-      f.className = 'foreshadow';
-      if (starColors === STAR_COLORS_LIGHT_BG) {
-        f.style.setProperty('--fs', 'rgba(217, 143, 0, 0.18)');
-      }
-      field.append(f);
-      setTimeout(() => f.remove(), 1_000);
-    },
+    foreshadow: fireForeshadow,
 
-    /** 金の雨。tier: 'rare' | 'epic'(epicは濃い雨+縁光)。 */
-    rain(tier) {
-      if (tier === 'epic') {
-        const vg = document.createElement('div');
-        vg.className = 'vignette';
-        field.append(vg);
-        setTimeout(() => vg.remove(), 2_000);
-      }
-      const count = tier === 'epic' ? 90 : 45;
-      const sizeSpread = tier === 'epic' ? 14 : 10;
-      for (let i = 0; i < count; i += 1) {
-        const s = document.createElement('span');
-        s.className = 'rainstar';
-        s.style.setProperty('--c', starColors[Math.floor(Math.random() * starColors.length)]);
-        s.style.setProperty('--size', `${6 + Math.random() * sizeSpread}px`);
-        s.style.setProperty('--dur', `${1.6 + Math.random() * 1.4}s`);
-        s.style.setProperty('--delay', `${Math.random() * 1.2}s`);
-        s.style.left = `${Math.random() * 100}%`;
-        field.append(s);
-        setTimeout(() => s.remove(), 4_600);
-      }
-    },
+    /** 金の雨。tier: 'rare' | 'epic' | 'jackpot'(rare以外は縁光つき)。 */
+    rain: fireRain,
+
+    /** 大当たり(クイズ正解・低Level用)。 */
+    jackpot: fireJackpot,
 
     /** ヒントカードを1枚表示。前のカードが残っていれば置き換える。 */
     showHint(text, { onClick, quiet = false } = {}) {
@@ -406,7 +427,7 @@ export function createOverlay() {
      * 責めない: 不正解を罰しない・採点を残さない・無視したら黙って消える。
      * 教えない: 正誤も解説も言葉にしない。正解の選択肢が光る+星だけ。
      */
-    showQuiz(quiz, { onAnswer } = {}) {
+    showQuiz(quiz, { onAnswer, rewardTier = 'shower' } = {}) {
       dismissHint(); // ヒントカードと同じ場所に出すので置き換える
       const el = document.createElement('div');
       el.className = 'quiz';
@@ -443,10 +464,18 @@ export function createOverlay() {
           // 言葉の原則: 正誤を言葉で言わない・解説しない。
           // 正解の選択肢が光る(事実)+ 星(雰囲気)だけで伝える
           buttons[quiz.answer_index].classList.add('correct');
-          if (correct) shower(field, [36, 20]);
-          else burst(field, 8, { delaySpread: 0.6 }); // 参加への小さなきらめき(責めない)
+          if (correct) {
+            // 理解への報酬は最大瞬間風速。強さはθ連動(呼び手が決める)
+            if (rewardTier === 'jackpot') fireJackpot();
+            else if (rewardTier === 'rain') {
+              fireForeshadow();
+              setTimeout(() => fireRain('rare'), 950);
+            } else shower(field, [36, 20]);
+          } else {
+            burst(field, 8, { delaySpread: 0.6 }); // 参加への小さなきらめき(責めない)
+          }
           onAnswer?.(correct);
-          setTimeout(removeCard, correct ? 3_000 : 5_000);
+          setTimeout(removeCard, correct ? (rewardTier === 'shower' ? 3_000 : 5_500) : 5_000);
         });
         el.append(b);
         return b;
