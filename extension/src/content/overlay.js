@@ -285,19 +285,59 @@ function pageIsLight() {
   return true; // どちらも透明ならブラウザ既定(白)とみなす
 }
 
-function burst(parent, count, { delaySpread = 0.8, sizeMin = 5, sizeMax = 18 } = {}) {
+// 本文カラムの位置(main.jsが設定)。日常の星はこの外側=余白にだけ出す。
+// 「ドーパミンは出すが邪魔はしない」: 文字に重なる全画面演出は
+// 大当たり・読了などのピーク時(fullField: true)に限る。
+let textColumn = null;
+
+export function setTextColumn(col) {
+  textColumn = col; // { left, right } in viewport px、無ければnull
+}
+
+const MARGIN_PAD = 24; // 本文からこれだけ離す
+const MIN_ZONE = 56; // これより狭い余白は使わない
+
+function marginZones() {
+  if (!textColumn) return null;
+  const vw = innerWidth;
+  const zones = [];
+  if (textColumn.left - MARGIN_PAD >= MIN_ZONE) zones.push([4, textColumn.left - MARGIN_PAD]);
+  if (vw - textColumn.right - MARGIN_PAD >= MIN_ZONE) {
+    zones.push([textColumn.right + MARGIN_PAD, vw - 4]);
+  }
+  return zones.length ? zones : null;
+}
+
+// 星の出現位置。日常(fullField=false)は余白から。余白が無いページでは
+// 全幅に出すが小さく控えめにする(scale)。
+function spawnPos(fullField) {
+  if (fullField) return { xPct: Math.random() * 100, scale: 1 };
+  const zones = marginZones();
+  if (!zones) return { xPct: Math.random() * 100, scale: 0.55 };
+  const z = zones[Math.floor(Math.random() * zones.length)];
+  const x = z[0] + Math.random() * (z[1] - z[0]);
+  return { xPct: (x / innerWidth) * 100, scale: 1 };
+}
+
+function makeStar({ sizeMin, sizeMax, scale, delaySpread }) {
+  const s = document.createElement('span');
+  s.className = 'sparkle';
+  // 外向き+すこし上へ舞う
+  const angle = Math.random() * Math.PI * 2;
+  const dist = 30 + Math.random() * 70;
+  s.style.setProperty('--dx', `${Math.cos(angle) * dist}px`);
+  s.style.setProperty('--dy', `${Math.sin(angle) * dist * 0.6 - 24}px`);
+  s.style.setProperty('--size', `${(sizeMin + Math.random() * (sizeMax - sizeMin)) * scale}px`);
+  s.style.setProperty('--delay', `${Math.random() * delaySpread}s`);
+  s.style.setProperty('--c', starColors[Math.floor(Math.random() * starColors.length)]);
+  return s;
+}
+
+function burst(parent, count, { delaySpread = 0.8, sizeMin = 5, sizeMax = 18, fullField = false } = {}) {
   for (let i = 0; i < count; i += 1) {
-    const s = document.createElement('span');
-    s.className = 'sparkle';
-    // ランダムな点から、外向き+すこし上へ舞う
-    const angle = Math.random() * Math.PI * 2;
-    const dist = 30 + Math.random() * 70;
-    s.style.setProperty('--dx', `${Math.cos(angle) * dist}px`);
-    s.style.setProperty('--dy', `${Math.sin(angle) * dist * 0.6 - 24}px`);
-    s.style.setProperty('--size', `${sizeMin + Math.random() * (sizeMax - sizeMin)}px`);
-    s.style.setProperty('--delay', `${Math.random() * delaySpread}s`);
-    s.style.setProperty('--c', starColors[Math.floor(Math.random() * starColors.length)]);
-    s.style.left = `${Math.random() * 100}%`;
+    const pos = spawnPos(fullField);
+    const s = makeStar({ sizeMin, sizeMax, scale: pos.scale, delaySpread });
+    s.style.left = `${pos.xPct}%`;
     s.style.top = `${Math.random() * 100}%`;
     parent.append(s);
     setTimeout(() => s.remove(), (2 + delaySpread) * 1000 + 200);
@@ -305,10 +345,10 @@ function burst(parent, count, { delaySpread = 0.8, sizeMin = 5, sizeMax = 18 } =
 }
 
 /** 波を重ねて「きらきらしている時間」を作る。counts = 各波の星の数。 */
-function shower(parent, counts, interval = 1_200) {
+function shower(parent, counts, { interval = 1_200, fullField = false } = {}) {
   counts.forEach((count, i) => {
     setTimeout(() => {
-      if (parent.isConnected) burst(parent, count, { delaySpread: 1.2 });
+      if (parent.isConnected) burst(parent, count, { delaySpread: 1.2, fullField });
     }, i * interval);
   });
 }
@@ -403,7 +443,7 @@ export function createOverlay() {
     fireForeshadow();
     setTimeout(() => {
       fireRain('jackpot');
-      shower(field, [60, 40, 20]);
+      shower(field, [60, 40, 20], { fullField: true }); // ピーク時だけ全画面
       setTimeout(fireVignette, 1_200); // 縁光の二拍目
     }, 950);
   }
@@ -465,8 +505,21 @@ export function createOverlay() {
     },
 
     /** 地の演出: 読んでいる間に漂う小さな星。ヒントの波より小粒で静か。 */
-    ambient(count) {
-      burst(field, count, { delaySpread: 1.0, sizeMin: 5, sizeMax: 12 });
+    /**
+     * 地の演出「キラッ」: 余白のランダムな一点に、星が固まって瞬く。
+     * 一定間隔で均等に湧く単調さをやめて、突発的な一瞬のきらめきにする。
+     */
+    glint(count) {
+      const pos = spawnPos(false);
+      const baseX = (pos.xPct / 100) * innerWidth;
+      const baseY = (10 + Math.random() * 80) * (innerHeight / 100);
+      for (let i = 0; i < count; i += 1) {
+        const s = makeStar({ sizeMin: 5, sizeMax: 13, scale: pos.scale, delaySpread: 0.35 });
+        s.style.left = `${baseX + (Math.random() - 0.5) * 44}px`;
+        s.style.top = `${baseY + (Math.random() - 0.5) * 80}px`;
+        field.append(s);
+        setTimeout(() => s.remove(), 2_600);
+      }
     },
 
     /**
@@ -551,7 +604,7 @@ export function createOverlay() {
       shadow.append(wrap);
       requestAnimationFrame(() => wrap.classList.add('show'));
       // お祝いはさらに濃く、画面全体で
-      shower(field, [80, 56, 32]);
+      shower(field, [80, 56, 32], { fullField: true }); // 読了はピーク: 全画面
       setTimeout(() => wrap.classList.remove('show'), 2_100);
       setTimeout(() => wrap.remove(), 2_700);
     },

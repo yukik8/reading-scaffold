@@ -14,15 +14,20 @@ const mod = (path) => import(chrome.runtime.getURL(path) + v);
 const { Msg, EventType } = await mod('src/shared/events.js');
 const { SESSION, AMBIENT, THETA_BY_LEVEL, EFFECT_TIERS, QUIZ } =
   await mod('src/shared/config.js');
-const { createOverlay } = await mod('src/content/overlay.js');
+const { createOverlay, setTextColumn } = await mod('src/content/overlay.js');
 const { pickHint } = await mod('src/content/hints.js');
 
 // ---- 本文検出(読み取り専用) --------------------------------------------
 
 // 語数の見積もり: ラテン文字は空白区切り、CJKは文字数で数える。
-function countWords(text) {
+function countParts(text) {
   const latin = text.match(/[A-Za-z0-9]+(?:[''-][A-Za-z0-9]+)*/g)?.length ?? 0;
   const cjk = text.match(/[぀-ヿ㐀-鿿豈-﫿]/g)?.length ?? 0;
+  return { latin, cjk };
+}
+
+function countWords(text) {
+  const { latin, cjk } = countParts(text);
   return latin + cjk;
 }
 
@@ -34,12 +39,24 @@ function detectParagraphs() {
   const paragraphs = [...root.querySelectorAll('p')].filter(
     (p) => countWords(p.innerText ?? '') >= 20 && p.offsetParent !== null,
   );
-  const totalWords = paragraphs.reduce((a, p) => a + countWords(p.innerText), 0);
+  let latinTotal = 0;
+  let cjkTotal = 0;
+  for (const p of paragraphs) {
+    const { latin, cjk } = countParts(p.innerText);
+    latinTotal += latin;
+    cjkTotal += cjk;
+  }
+  const totalWords = latinTotal + cjkTotal;
   const ok = paragraphs.length >= SESSION.minParagraphs && totalWords >= SESSION.minWords;
-  return { paragraphs: ok ? paragraphs : [], totalWords, mode: ok ? 'full' : 'measure-only' };
+  return {
+    paragraphs: ok ? paragraphs : [],
+    totalWords,
+    isCJK: cjkTotal >= latinTotal, // 本文の言語判定(ヒントチップの単位に使う)
+    mode: ok ? 'full' : 'measure-only',
+  };
 }
 
-const { paragraphs, totalWords, mode } = detectParagraphs();
+const { paragraphs, totalWords, isCJK, mode } = detectParagraphs();
 
 // ---- service workerへの報告 ----------------------------------------------
 
@@ -77,6 +94,22 @@ paragraphs.forEach((p, i) => {
   p.dataset.rsIdx = String(i);
   observer.observe(p);
 });
+
+// 本文カラムの位置をオーバーレイへ伝える(日常の星を余白に逃がすため)
+function updateTextColumn() {
+  let left = Infinity;
+  let right = -Infinity;
+  for (const p of paragraphs) {
+    const r = p.getBoundingClientRect();
+    if (r.width > 0) {
+      if (r.left < left) left = r.left;
+      if (r.right > right) right = r.right;
+    }
+  }
+  setTextColumn(Number.isFinite(left) ? { left, right } : null);
+}
+updateTextColumn();
+addEventListener('resize', updateTextColumn, { passive: true });
 
 function visibleRange() {
   if (visible.size === 0) return null;
@@ -263,6 +296,7 @@ function showHint(idx) {
   const { hint_id, text } = pickHint({
     pct: completionPct(),
     min: Math.max(1, Math.round(localReadMs / 60_000)),
+    cjk: isCJK,
   });
   report(EventType.HINT_SHOWN, { hint_id, kind: 'canned' });
   const onClick = () => report(EventType.HINT_CLICKED, { hint_id });
@@ -310,10 +344,9 @@ const ambientTimer = AMBIENT.enabled
   ? setInterval(() => {
       if (document.hidden || mode !== 'full' || theta <= 0) return;
       if (!isReading()) return; // 読む手が止まっているときに光らせない
-      const expected = (theta / THETA_BY_LEVEL[0]) ** 2 * AMBIENT.maxStarsPerTick;
-      let n = Math.floor(expected);
-      if (Math.random() < expected - n) n += 1; // 端数は確率で1粒
-      if (n > 0) overlay.ambient(n);
+      // 均等に湧かせず、たまに「キラッ」と固まって瞬く(予測不能性)
+      const p = (theta / THETA_BY_LEVEL[0]) ** 2 * AMBIENT.maxClusterChance;
+      if (Math.random() < p) overlay.glint(3 + Math.floor(Math.random() * 5));
     }, AMBIENT.tickMs)
   : null;
 
@@ -323,6 +356,7 @@ function stop({ celebrate = false, readMin = 0 } = {}) {
   clearInterval(dwellTimer);
   if (ambientTimer) clearInterval(ambientTimer);
   observer.disconnect();
+  removeEventListener('resize', updateTextColumn);
   for (const [type, fn] of listeners) removeEventListener(type, fn);
   for (const p of paragraphs) delete p.dataset.rsIdx;
   window.__readingScaffoldLoaded = false;

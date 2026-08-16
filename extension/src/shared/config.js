@@ -48,11 +48,10 @@ export const SESSION = {
 export const AMBIENT = {
   enabled: true,
   tickMs: 1_500,
-  // 1 tickあたりの星の期待数 = (θ/θmax)² × maxStarsPerTick
-  // 2乗カーブにしているのは、Level 0では惜しみなく(約4粒/1.5秒)、
-  // 中間Levelでは控えめに、卒業間際ではほぼ無音にするため。
-  // 線形だとLevel 4(θ=0.5)でもまだ目についてしまう。
-  maxStarsPerTick: 4,
+  // 1 tickあたりの「キラッ」発生確率 = (θ/θmax)² × maxClusterChance。
+  // 均等に湧かせず、余白の一点に星が固まって瞬く(1回3〜7粒)。
+  // 2乗カーブ: Level 0で約4.3秒に1回、中間は稀に、卒業間際はほぼ無音。
+  maxClusterChance: 0.35,
 };
 
 // 演出のレア度。ヒント発火時にロールする(=頻度はθ配下のまま、大きさだけ可変)。
