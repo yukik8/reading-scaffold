@@ -268,9 +268,19 @@ const CSS = `
 // 星の色はページの背景の明暗で切り替える。淡い金は白背景に溶けて見えない。
 import { DEMO } from '../shared/config.js';
 
-// デモモード: 星の数・大きさだけを増幅する(発火条件・記録は不変)
-const BOOST = DEMO.enabled ? DEMO.boost : 1;
-const SIZE_BOOST = DEMO.enabled ? 1.25 : 1;
+// デモモード: 増幅はθ連動。θが高い(初心者)ほど極端に盛り、
+// θが低い(玄人)はほぼ通常=静か。タペリングの物語をデモでも壊さない。
+let demoFactor = 1; // 星の数の倍率
+let demoSize = 1; // 星のサイズ倍率
+let demoMega = false; // 大盛り(二の矢・三の矢・大祝祭)を出すか
+
+export function setDemoTheta(theta) {
+  if (!DEMO.enabled) return;
+  const s = Math.max(0, Math.min(1, theta / 8)) ** 1.5; // 高θに寄せる
+  demoFactor = 1 + (DEMO.boost - 1) * s;
+  demoSize = 1 + 0.25 * s;
+  demoMega = theta >= 5;
+}
 
 const STAR_COLORS_DARK_BG = ['#ffd76a', '#ffe9a8', '#fff3c4', '#ffc94d'];
 const STAR_COLORS_LIGHT_BG = ['#d98f00', '#e6a817', '#c77f00', '#f0a92e'];
@@ -340,8 +350,8 @@ function makeStar({ sizeMin, sizeMax, scale, delaySpread }) {
 }
 
 function burst(parent, count, { delaySpread = 0.8, sizeMin = 5, sizeMax = 18, fullField = false } = {}) {
-  count = Math.round(count * BOOST);
-  sizeMax *= SIZE_BOOST;
+  count = Math.round(count * demoFactor);
+  sizeMax *= demoSize;
   for (let i = 0; i < count; i += 1) {
     const pos = spawnPos(fullField);
     const s = makeStar({ sizeMin, sizeMax, scale: pos.scale, delaySpread });
@@ -399,8 +409,8 @@ export function createOverlay() {
 
   function fireRain(tier) {
     if (tier !== 'rare') fireVignette();
-    const count = Math.round((tier === 'jackpot' ? 130 : tier === 'epic' ? 90 : 45) * BOOST);
-    const sizeSpread = (tier === 'jackpot' ? 18 : tier === 'epic' ? 14 : 10) * SIZE_BOOST;
+    const count = Math.round((tier === 'jackpot' ? 130 : tier === 'epic' ? 90 : 45) * demoFactor);
+    const sizeSpread = (tier === 'jackpot' ? 18 : tier === 'epic' ? 14 : 10) * demoSize;
     for (let i = 0; i < count; i += 1) {
       const s = document.createElement('span');
       s.className = 'rainstar';
@@ -453,8 +463,8 @@ export function createOverlay() {
       fireRain('jackpot');
       shower(field, [60, 40, 20], { fullField: true }); // ピーク時だけ全画面
       setTimeout(fireVignette, 1_200); // 縁光の二拍目
-      if (DEMO.enabled) {
-        // デモ: 二の矢・三の矢まで撃つ(計約9秒)
+      if (DEMO.enabled && demoMega) {
+        // デモ(高θのみ): 二の矢・三の矢まで撃つ(計約9秒)
         setTimeout(() => {
           fireForeshadow();
           fireRain('epic');
@@ -529,7 +539,7 @@ export function createOverlay() {
      * 一定間隔で均等に湧く単調さをやめて、突発的な一瞬のきらめきにする。
      */
     glint(count) {
-      count = Math.round(count * BOOST);
+      count = Math.round(count * demoFactor);
       const pos = spawnPos(false);
       const baseX = (pos.xPct / 100) * innerWidth;
       const baseY = (10 + Math.random() * 80) * (innerHeight / 100);
@@ -626,8 +636,8 @@ export function createOverlay() {
       requestAnimationFrame(() => wrap.classList.add('show'));
       // お祝いはさらに濃く、画面全体で
       shower(field, [80, 56, 32], { fullField: true }); // 読了はピーク: 全画面
-      if (DEMO.enabled) {
-        // デモ: 金の雨+予告+縁光を重ねた大祝祭(約8秒)
+      if (DEMO.enabled && demoMega) {
+        // デモ(高θのみ): 金の雨+予告+縁光を重ねた大祝祭(約8秒)
         fireVignette();
         setTimeout(() => {
           fireForeshadow();
@@ -639,7 +649,7 @@ export function createOverlay() {
         }, 3_200);
         setTimeout(fireVignette, 4_800);
       }
-      const showMs = DEMO.enabled ? 6_500 : 2_100;
+      const showMs = DEMO.enabled && demoMega ? 6_500 : 2_100;
       setTimeout(() => wrap.classList.remove('show'), showMs);
       setTimeout(() => wrap.remove(), showMs + 600);
     },

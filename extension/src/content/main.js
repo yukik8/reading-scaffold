@@ -14,7 +14,7 @@ const mod = (path) => import(chrome.runtime.getURL(path) + v);
 const { Msg, EventType } = await mod('src/shared/events.js');
 const { SESSION, AMBIENT, THETA_MAX, EFFECT_TIERS, QUIZ, DEMO } =
   await mod('src/shared/config.js');
-const { createOverlay, setTextColumn } = await mod('src/content/overlay.js');
+const { createOverlay, setTextColumn, setDemoTheta } = await mod('src/content/overlay.js');
 const { pickHint } = await mod('src/content/hints.js');
 
 // ---- 本文検出(読み取り専用) --------------------------------------------
@@ -219,8 +219,8 @@ function planHints() {
 // 演出のレア度ロール。頻度はθが決め、ここは「大きさ」だけを予測不能にする。
 function rollTier() {
   const r = Math.random();
-  if (DEMO.enabled) {
-    // デモ: レア演出をどんどん出す
+  if (DEMO.enabled && theta >= 5) {
+    // デモ(高θ=初心者側のみ): レア演出をどんどん出す。玄人は通常確率
     if (r < 0.35) return 'epic';
     if (r < 0.8) return 'rare';
     return 'normal';
@@ -280,13 +280,9 @@ async function startQuiz() {
   hintsShown += 1;
   report(EventType.HINT_SHOWN, { hint_id: 'quiz_llm', kind: 'quiz' });
   // 正解時の演出の強さはθ連動: θが高いほど盛大に、卒業に向けて静かになる
-  const rewardTier = DEMO.enabled
-    ? 'jackpot' // デモ中は常に大当たり
-    : theta >= QUIZ.jackpotMinTheta
-      ? 'jackpot'
-      : theta >= QUIZ.rainMinTheta
-        ? 'rain'
-        : 'shower';
+  // デモでも強さはθに従う(初心者=大当たり、玄人=静かな二波)。
+  const rewardTier =
+    theta >= QUIZ.jackpotMinTheta ? 'jackpot' : theta >= QUIZ.rainMinTheta ? 'rain' : 'shower';
   overlay.showQuiz(res.quiz, {
     rewardTier,
     // 出題元の段落を光の枠で指す(言葉ではなく光で「この段落の話」と伝える)
@@ -375,7 +371,9 @@ const ambientTimer = AMBIENT.enabled
       if (!isReading()) return; // 読む手が止まっているときに光らせない
       // 均等に湧かせず、たまに「キラッ」と固まって瞬く(予測不能性)
       const p =
-        (theta / THETA_MAX) ** 2 * AMBIENT.maxClusterChance * (DEMO.enabled ? 2.2 : 1);
+        (theta / THETA_MAX) ** 2 *
+        AMBIENT.maxClusterChance *
+        (DEMO.enabled && theta >= 5 ? 2.2 : 1);
       if (Math.random() < Math.min(p, 0.9)) overlay.glint(3 + Math.floor(Math.random() * 5));
     }, AMBIENT.tickMs)
   : null;
@@ -393,7 +391,7 @@ function stop({ celebrate = false, readMin = 0 } = {}) {
   window.__readingScaffoldLoaded = false;
   if (celebrate) {
     overlay.celebrate(readMin);
-    setTimeout(() => overlay.destroy(), DEMO.enabled ? 7_500 : 2_800);
+    setTimeout(() => overlay.destroy(), DEMO.enabled && theta >= 5 ? 7_500 : 2_800);
   } else {
     overlay.destroy();
   }
@@ -403,8 +401,9 @@ chrome.runtime.onMessage.addListener((msg) => {
   if (msg?.type === 'rs_stop') {
     stop({ celebrate: msg.celebrate === true, readMin: msg.read_min ?? 0 });
   } else if (msg?.type === 'rs_theta') {
-    // θ手動ダイヤル(popup)からの即時反映。
+    // θ手動ダイヤル(ダッシュボード)からの即時反映。
     theta = msg.theta ?? 0;
+    setDemoTheta(theta);
     planHints();
   }
 });
@@ -432,6 +431,7 @@ for (let i = 0; i < 6 && !sessionInfo; i += 1) {
   if (!sessionInfo) await new Promise((r) => setTimeout(r, 250));
 }
 theta = sessionInfo?.theta ?? 0;
+setDemoTheta(theta); // デモの増幅率もθ連動(玄人はほぼ通常=静か)
 planHints();
 
 // 開始の合図。無言だと動いているかどうかが本人に分からない(診断可能性)。
