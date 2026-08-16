@@ -243,7 +243,8 @@ function maybeQuizInsteadOfHint() {
   if (!QUIZ.enabled || quizUsed || quizInFlight) return false;
   if (mode !== 'full') return false;
   if (maxDepthIdx + 1 < QUIZ.minParagraphsRead) return false;
-  if (!DEMO.enabled && Math.random() >= QUIZ.p) return false; // デモ中は最初の枠で必ず出す
+  // デモでも頻度はθに従う: 初心者側(θ>=5)だけ確実に出し、玄人は通常の30%抽選
+  if (!(DEMO.enabled && theta >= 5) && Math.random() >= QUIZ.p) return false;
   startQuiz();
   return true;
 }
@@ -346,7 +347,8 @@ function fireHintFromVisible() {
   }
 }
 
-// デモ: ヒント枠を待たず、開始直後からクイズを出しにいく(1問出たら止まる)
+// デモ: ヒント枠を待たず、開始直後からクイズを出しにいく(1問出たら止まる)。
+// これも初心者側(θ>=5)のみ — 玄人のクイズは通常経路の頻度に従う
 const demoQuizTimer =
   DEMO.enabled && QUIZ.enabled
     ? setInterval(() => {
@@ -354,6 +356,7 @@ const demoQuizTimer =
           clearInterval(demoQuizTimer);
           return;
         }
+        if (theta < 5) return; // 玄人はデモ加速なし
         if (quizInFlight || mode !== 'full' || maxDepthIdx < 0) return;
         startQuiz();
       }, 3_000)
