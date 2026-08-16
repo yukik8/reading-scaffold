@@ -86,6 +86,56 @@ const CSS = `
     100% { opacity: 0; transform: translate(var(--dx), var(--dy)) rotate(220deg) scale(0.1); }
   }
 
+  /* 予告: 画面を斜めに走る金の光。この後に必ず本演出が来る(ニアミス禁止) */
+  .foreshadow {
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(
+      105deg,
+      transparent 40%,
+      var(--fs, rgba(255, 215, 106, 0.22)) 50%,
+      transparent 60%
+    );
+    transform: translateX(-100%);
+    animation: sweep 0.9s ease-in-out forwards;
+  }
+  @keyframes sweep {
+    to { transform: translateX(100%); }
+  }
+
+  /* 金の雨(レア演出)。上から星が降る */
+  .rainstar {
+    position: absolute;
+    top: -24px;
+    width: var(--size, 8px);
+    height: var(--size, 8px);
+    background: var(--c, #ffd76a);
+    clip-path: polygon(50% 0, 62% 38%, 100% 50%, 62% 62%, 50% 100%, 38% 62%, 0 50%, 38% 38%);
+    filter: drop-shadow(0 0 5px var(--c, #ffd76a));
+    pointer-events: none;
+    opacity: 0;
+    animation: fall var(--dur, 2.2s) linear var(--delay, 0s) forwards;
+  }
+  @keyframes fall {
+    0%   { opacity: 0; transform: translateY(0) rotate(0deg); }
+    8%   { opacity: 1; }
+    88%  { opacity: 1; }
+    100% { opacity: 0; transform: translateY(105vh) rotate(300deg); }
+  }
+
+  /* 激レア用: 画面の縁がふわっと金色に光る */
+  .vignette {
+    position: absolute;
+    inset: 0;
+    box-shadow: inset 0 0 140px rgba(255, 200, 80, 0.45);
+    opacity: 0;
+    animation: vig 1.8s ease-out forwards;
+  }
+  @keyframes vig {
+    20%  { opacity: 1; }
+    100% { opacity: 0; }
+  }
+
   /* 読了お祝い(セッション成功時のみ・数秒で消える) */
   .celebrate {
     position: fixed;
@@ -224,8 +274,42 @@ export function createOverlay() {
       setTimeout(() => el.remove(), ms + 500);
     },
 
+    /** 予告の光。呼んだ側は必ず続けて本演出(rain)を出すこと。 */
+    foreshadow() {
+      const f = document.createElement('div');
+      f.className = 'foreshadow';
+      if (starColors === STAR_COLORS_LIGHT_BG) {
+        f.style.setProperty('--fs', 'rgba(217, 143, 0, 0.18)');
+      }
+      field.append(f);
+      setTimeout(() => f.remove(), 1_000);
+    },
+
+    /** 金の雨。tier: 'rare' | 'epic'(epicは濃い雨+縁光)。 */
+    rain(tier) {
+      if (tier === 'epic') {
+        const vg = document.createElement('div');
+        vg.className = 'vignette';
+        field.append(vg);
+        setTimeout(() => vg.remove(), 2_000);
+      }
+      const count = tier === 'epic' ? 90 : 45;
+      const sizeSpread = tier === 'epic' ? 14 : 10;
+      for (let i = 0; i < count; i += 1) {
+        const s = document.createElement('span');
+        s.className = 'rainstar';
+        s.style.setProperty('--c', starColors[Math.floor(Math.random() * starColors.length)]);
+        s.style.setProperty('--size', `${6 + Math.random() * sizeSpread}px`);
+        s.style.setProperty('--dur', `${1.6 + Math.random() * 1.4}s`);
+        s.style.setProperty('--delay', `${Math.random() * 1.2}s`);
+        s.style.left = `${Math.random() * 100}%`;
+        field.append(s);
+        setTimeout(() => s.remove(), 4_600);
+      }
+    },
+
     /** ヒントカードを1枚表示。前のカードが残っていれば置き換える。 */
-    showHint(text, { onClick } = {}) {
+    showHint(text, { onClick, quiet = false } = {}) {
       dismissHint();
       const el = document.createElement('div');
       el.className = 'hint';
@@ -240,8 +324,8 @@ export function createOverlay() {
       });
       shadow.append(el);
       requestAnimationFrame(() => el.classList.add('show'));
-      // 画面全体に星が舞う(三波・計約4.5秒)
-      shower(field, [44, 28, 14]);
+      // 画面全体に星が舞う(三波・計約4.5秒)。quiet時は呼び手が別演出を重ねる
+      if (!quiet) shower(field, [44, 28, 14]);
       hintEl = el;
       hintTimer = setTimeout(dismissHint, 7_000);
     },

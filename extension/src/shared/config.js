@@ -55,6 +55,15 @@ export const AMBIENT = {
   maxStarsPerTick: 4,
 };
 
+// 演出のレア度。ヒント発火時にロールする(=頻度はθ配下のまま、大きさだけ可変)。
+// ドーパミンは報酬の予測誤差で出るので、頻度の乱数に加えて大きさも予測不能にする。
+// ルール: 予告(foreshadow)はレア以上が確定したときだけ出す。
+// ニアミス(予告→ハズレ)は悔しさ駆動の技法なので構造的に作らない。
+export const EFFECT_TIERS = {
+  epic: { p: 0.025 }, // 激レア: 金の雨(濃)+縁光。約1/40
+  rare: { p: 0.12 }, // レア: 金の雨。約1/8
+};
+
 // success := read_ms >= 5分 かつ escapes <= 1
 export const SUCCESS = {
   minReadMs: 5 * 60_000,

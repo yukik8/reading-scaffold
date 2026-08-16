@@ -12,7 +12,7 @@ const v = new URL(import.meta.url).search;
 const mod = (path) => import(chrome.runtime.getURL(path) + v);
 
 const { Msg, EventType } = await mod('src/shared/events.js');
-const { SESSION, AMBIENT, THETA_BY_LEVEL } = await mod('src/shared/config.js');
+const { SESSION, AMBIENT, THETA_BY_LEVEL, EFFECT_TIERS } = await mod('src/shared/config.js');
 const { createOverlay } = await mod('src/content/overlay.js');
 const { pickHint } = await mod('src/content/hints.js');
 
@@ -182,6 +182,14 @@ function planHints() {
   for (const idx of candidates.slice(0, remaining)) pendingHintAt.add(idx);
 }
 
+// 演出のレア度ロール。頻度はθが決め、ここは「大きさ」だけを予測不能にする。
+function rollTier() {
+  const r = Math.random();
+  if (r < EFFECT_TIERS.epic.p) return 'epic';
+  if (r < EFFECT_TIERS.epic.p + EFFECT_TIERS.rare.p) return 'rare';
+  return 'normal';
+}
+
 function showHint(idx) {
   pendingHintAt.delete(idx);
   hintsShown += 1;
@@ -190,9 +198,20 @@ function showHint(idx) {
     min: Math.max(1, Math.round(localReadMs / 60_000)),
   });
   report(EventType.HINT_SHOWN, { hint_id, kind: 'canned' });
-  overlay.showHint(text, {
-    onClick: () => report(EventType.HINT_CLICKED, { hint_id }),
-  });
+  const onClick = () => report(EventType.HINT_CLICKED, { hint_id });
+
+  const tier = rollTier();
+  if (tier === 'normal') {
+    overlay.showHint(text, { onClick });
+    return;
+  }
+  // レア以上: 予告の光→約1秒後に金の雨。予告は必ず当たる(ニアミスは作らない)。
+  overlay.showHint(text, { onClick, quiet: true });
+  overlay.foreshadow();
+  setTimeout(() => {
+    overlay.rain(tier);
+    report(EventType.EFFECT_SHOWN, { effect_id: `rain_${tier}` });
+  }, 950);
 }
 
 /** 主経路: 候補段落が新しく画面に入った瞬間(段落境界)。 */
