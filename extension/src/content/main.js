@@ -12,7 +12,7 @@ const v = new URL(import.meta.url).search;
 const mod = (path) => import(chrome.runtime.getURL(path) + v);
 
 const { Msg, EventType } = await mod('src/shared/events.js');
-const { SESSION } = await mod('src/shared/config.js');
+const { SESSION, AMBIENT } = await mod('src/shared/config.js');
 const { createOverlay } = await mod('src/content/overlay.js');
 const { pickHint } = await mod('src/content/hints.js');
 
@@ -214,10 +214,28 @@ function fireHintFromVisible() {
   }
 }
 
+// ---- 常時演出(地のきらきら) ---------------------------------------------
+//
+// 読んでいる間だけ、θに比例した密度で小さな星が漂う。ヒント(離散報酬)とは
+// 別系統の連続的な演出で、Level 0が最も濃く、θの減少とともに自然に薄まる。
+// 「読んでいる状態そのものに薄い報酬が伴う」がこの補助輪の地の部分。
+
+const ambientTimer = AMBIENT.enabled
+  ? setInterval(() => {
+      if (document.hidden || mode !== 'full' || theta <= 0) return;
+      if (!isReading()) return; // 読む手が止まっているときに光らせない
+      const expected = theta * AMBIENT.starsPerTickPerTheta;
+      let n = Math.floor(expected);
+      if (Math.random() < expected - n) n += 1; // 端数は確率で1粒
+      if (n > 0) overlay.ambient(n);
+    }, AMBIENT.tickMs)
+  : null;
+
 // ---- 片付け ---------------------------------------------------------------
 
 function stop({ celebrate = false, readMin = 0 } = {}) {
   clearInterval(dwellTimer);
+  if (ambientTimer) clearInterval(ambientTimer);
   observer.disconnect();
   for (const [type, fn] of listeners) removeEventListener(type, fn);
   for (const p of paragraphs) delete p.dataset.rsIdx;

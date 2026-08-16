@@ -136,7 +136,7 @@ const CSS = `
 
 const STAR_COLORS = ['#ffd76a', '#ffe9a8', '#fff3c4', '#ffc94d'];
 
-function burst(parent, count, { delaySpread = 0.8 } = {}) {
+function burst(parent, count, { delaySpread = 0.8, sizeMin = 5, sizeMax = 18 } = {}) {
   for (let i = 0; i < count; i += 1) {
     const s = document.createElement('span');
     s.className = 'sparkle';
@@ -145,7 +145,7 @@ function burst(parent, count, { delaySpread = 0.8 } = {}) {
     const dist = 30 + Math.random() * 70;
     s.style.setProperty('--dx', `${Math.cos(angle) * dist}px`);
     s.style.setProperty('--dy', `${Math.sin(angle) * dist * 0.6 - 24}px`);
-    s.style.setProperty('--size', `${5 + Math.random() * 13}px`);
+    s.style.setProperty('--size', `${sizeMin + Math.random() * (sizeMax - sizeMin)}px`);
     s.style.setProperty('--delay', `${Math.random() * delaySpread}s`);
     s.style.setProperty('--c', STAR_COLORS[Math.floor(Math.random() * STAR_COLORS.length)]);
     s.style.left = `${Math.random() * 100}%`;
@@ -225,6 +225,11 @@ export function createOverlay() {
       shower(field, [44, 28, 14]);
       hintEl = el;
       hintTimer = setTimeout(dismissHint, 7_000);
+    },
+
+    /** 地の演出: 読んでいる間に漂う小さな星。ヒントの波より小粒で静か。 */
+    ambient(count) {
+      burst(field, count, { delaySpread: 1.0, sizeMin: 4, sizeMax: 9 });
     },
 
     /** 読了お祝い。セッション成功時のみ呼ばれる。 */

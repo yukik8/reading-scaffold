@@ -42,6 +42,16 @@ export const SESSION = {
   minWords: 200,
 };
 
+// 常時演出(ambient): 読んでいる間、θに比例した密度で小さな星を漂わせる。
+// ヒント(離散的な報酬)と別系統の「地」の演出。θに比例するので、
+// Level 0で最も濃く、Levelが上がると自然に薄まり、Level 5(θ=0)で消える。
+export const AMBIENT = {
+  enabled: true,
+  tickMs: 3_000,
+  // 1 tickあたりの星の期待数 = θ × この係数(θ=8なら3秒ごとに約2粒)
+  starsPerTickPerTheta: 0.25,
+};
+
 // success := read_ms >= 5分 かつ escapes <= 1
 export const SUCCESS = {
   minReadMs: 5 * 60_000,
