@@ -3,7 +3,8 @@
 // θ変更と全消去だけはSW経由(進行中セッションへの反映・後片付けがSWの仕事なので)。
 
 import { Msg } from '../shared/events.js';
-import { THETA_MAX } from '../shared/config.js';
+import { THETA_MAX, DEMO } from '../shared/config.js';
+import { seedDemoData } from './demo-seed.js';
 import { buildMirror } from '../background/mirror.js';
 import { buildLibrary, buildQuizLog, buildTotals, buildThetaHistory } from '../background/library.js';
 import {
@@ -214,6 +215,16 @@ $('export').addEventListener('click', async () => {
   a.download = `reading-scaffold-${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}.json`;
   a.click();
   URL.revokeObjectURL(a.href);
+});
+
+// 玄人デモデータ(DEMOモード中のみ表示)。デモ用プロファイルで使う想定
+$('seed-demo').hidden = !DEMO.enabled;
+$('seed-demo').addEventListener('click', async () => {
+  if (!confirm('約10週間分の玄人デモ履歴を投入します(既存データに追記されます)。')) return;
+  $('seed-demo').disabled = true;
+  await seedDemoData();
+  await render();
+  $('seed-demo').disabled = false;
 });
 
 $('wipe').addEventListener('click', async () => {

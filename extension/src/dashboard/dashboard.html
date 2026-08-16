@@ -70,8 +70,12 @@
           <button id="export" type="button">JSONでエクスポート</button>
         </div>
         <details class="override">
-          <summary>θを手動で上書き(開発用)</summary>
+          <summary>開発用</summary>
+          <label class="override-label" for="theta">θを手動で上書き</label>
           <input id="theta" type="range" min="0" max="8" step="0.1" value="8" aria-label="補助量θ" />
+          <div class="actions">
+            <button id="seed-demo" type="button" hidden>玄人デモデータを投入</button>
+          </div>
         </details>
         <div class="danger">
           <p class="danger-note">元に戻せない操作</p>
