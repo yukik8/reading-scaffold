@@ -20,7 +20,7 @@
 // ブラウザ終了で消える — セッションという意味に合う)。
 
 import { EventType, EndReason, SessionState } from '../shared/events.js';
-import { SESSION, SUCCESS, THETA_MAX } from '../shared/config.js';
+import { SESSION, SUCCESS, THETA_MAX, CONTROLLER } from '../shared/config.js';
 import { dateKey } from '../shared/time.js';
 import {
   appendEvent,
@@ -30,9 +30,10 @@ import {
   getPage,
   putPage,
   addQuizAttempt,
+  getAllSessions,
   sha256Hex,
 } from './store.js';
-import { effectiveTheta } from './controller.js';
+import { effectiveTheta, nextState, applyHomeostat, isSuccess } from './controller.js';
 
 const CURRENT_KEY = 'currentSession';
 export const WATCHDOG_ALARM = 'rs-watchdog';
@@ -199,8 +200,49 @@ export async function endSession(reason) {
     }
   }
 
-  // 制御器の自動昇降はW3で接続する(CONTROLLER.enabled)。
-  // W1で動かすとヒント未実装のままLevelだけが動き、記録が実態と乖離するため。
+  // W3: タペリング制御器。セッションの成否で基準θを乗算的に動かす。
+  // 本人には通知しない(気づかれない速度で減らす)。変化はtheta_updateとして記録。
+  if (CONTROLLER.enabled) {
+    try {
+      const st = await getState();
+      let next;
+      let reason = null;
+      if (st.homeostat?.active) {
+        next = { ...st }; // 再展開中は漸減しない。回復判定はホメオスタットが行う
+      } else {
+        next = nextState(st, session, dateKey(Date.now()));
+        if (next.theta !== st.theta) reason = isSuccess(session) ? 'success' : 'fail';
+        if (st.theta > 0 && next.theta === 0) {
+          // 卒業の瞬間: 見守りのベースライン(直近4週の補助なし読書時間の週平均)を記録
+          reason = 'graduate';
+          next.homeostat = {
+            baseline: await unassistedWeeklyAvgMin(),
+            active: false,
+            graduated_at: Date.now(),
+          };
+        }
+      }
+      // 卒業後(と再展開中)の見守り
+      if (next.theta === 0 || next.homeostat?.active) {
+        const avg = await unassistedWeeklyAvgMin();
+        const after = applyHomeostat(next, avg);
+        if (after.theta !== next.theta) {
+          reason = after.homeostat.active ? 'homeostat_redeploy' : 'homeostat_recover';
+        }
+        next = after;
+      }
+      if (next.theta !== st.theta) {
+        await appendEvent(session.session_id, EventType.THETA_UPDATE, {
+          from: st.theta,
+          to: next.theta,
+          reason,
+        });
+      }
+      await putState(next);
+    } catch {
+      /* 制御の失敗は終了処理を妨げない */
+    }
+  }
 
   // content scriptに片付けを頼む。タブが既に無ければそれでよい。
   try {
@@ -401,6 +443,18 @@ export async function setTheta(value) {
     }
   }
   return { theta: clamped };
+}
+
+/** 補助なし読書時間の週平均(直近4週・分)。ホメオスタットの入力。 */
+async function unassistedWeeklyAvgMin() {
+  const sessions = await getAllSessions();
+  const cutoff = Date.now() - CONTROLLER.homeostatWindowWeeks * 7 * 86_400_000;
+  let ms = 0;
+  for (const s of sessions) {
+    if ((s.started_at ?? 0) < cutoff) continue;
+    if ((s.hints_shown ?? 0) === 0 && (s.effects_shown ?? 0) === 0) ms += s.read_ms ?? 0;
+  }
+  return ms / 60_000 / CONTROLLER.homeostatWindowWeeks;
 }
 
 async function escape(session, toDomain) {

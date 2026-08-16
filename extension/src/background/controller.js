@@ -74,11 +74,27 @@ export function nextState(state, session, today) {
 }
 
 /**
- * ホメオスタットモード(卒業後)。
- * TODO(W3): unassisted_read_min の4週移動平均が homeostatDropRatio を超えて落ちたら
- * 一時的にθを再展開し、回復したら再び0へ戻す。
+ * ホメオスタットモード(卒業後の見守り)。
+ * state.homeostat = { baseline, active, graduated_at } は卒業の瞬間に記録される。
+ * - 非展開中: 補助なし読書時間の週平均がベースライン×dropRatioを切ったら再展開
+ * - 展開中: ベースライン×recoverRatioまで戻ったら再び0へ
+ * 展開中の漸減は行わない(回復の判定は読書量だけで行う)。
  */
-export function homeostat(weeklyUnassistedMin) {
-  void weeklyUnassistedMin;
-  return null;
+export function applyHomeostat(state, weeklyUnassistedMin) {
+  const h = state.homeostat;
+  if (!h?.baseline || h.baseline <= 0) return state; // 卒業前・記録なしは対象外
+  if (!h.active && state.theta === 0) {
+    if (weeklyUnassistedMin < h.baseline * CONTROLLER.homeostatDropRatio) {
+      return {
+        ...state,
+        theta: CONTROLLER.homeostatRedeployTheta,
+        homeostat: { ...h, active: true },
+      };
+    }
+    return state;
+  }
+  if (h.active && weeklyUnassistedMin >= h.baseline * CONTROLLER.homeostatRecoverRatio) {
+    return { ...state, theta: 0, homeostat: { ...h, active: false } };
+  }
+  return state;
 }

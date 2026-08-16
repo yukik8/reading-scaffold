@@ -21,6 +21,7 @@ export const EventType = {
   EFFECT_SHOWN: 'effect_shown',
   QUIZ_ANSWERED: 'quiz_answered', // { correct }
   SESSION_END: 'session_end',
+  THETA_UPDATE: 'theta_update', // { from, to, reason } 制御器の動き(本人には通知しない・分析用)
 };
 
 export const SessionState = {

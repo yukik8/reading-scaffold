@@ -7,8 +7,8 @@
 export const THETA_MAX = 8;
 
 export const CONTROLLER = {
-  // W1-W2は計測と演出だけ。自動漸減はW3で有効にする。
-  enabled: false,
+  // W3で有効化(2026-08-16)。セッション終了ごとに基準θが自動で動く。
+  enabled: true,
 
   // 成功セッションごとに θ ← θ×(1−alpha)。10%はJND未満(本人に通知しない)
   alpha: 0.1,
@@ -20,8 +20,11 @@ export const CONTROLLER = {
   // 乗算は0に到達しないため、これ未満で0へスナップ(卒業)
   graduateBelow: 0.3,
   // ホメオスタットモード: 卒業後、補助なし読書時間の4週移動平均が
-  // このしきい値を超えて落ちたときだけ一時的にθを再展開する。
+  // 卒業時ベースラインのdropRatioを切ったら一時的にθを再展開し、
+  // recoverRatioまで戻ったら再び0へ(再展開中は漸減しない)。
   homeostatDropRatio: 0.5,
+  homeostatRecoverRatio: 0.8,
+  homeostatRedeployTheta: 1.5,
   homeostatWindowWeeks: 4,
 };
 
