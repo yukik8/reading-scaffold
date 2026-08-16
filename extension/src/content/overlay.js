@@ -152,6 +152,21 @@ const CSS = `
     opacity: 0.75;
   }
 
+  /* 出題元の段落を指す光の枠。ページDOMは触らず、オーバーレイ側で重ねるだけ */
+  .source-glow {
+    position: absolute;
+    border-radius: 8px;
+    box-shadow:
+      0 0 0 2px rgba(230, 168, 23, 0.55),
+      0 0 24px rgba(230, 168, 23, 0.3);
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.5s ease;
+  }
+  .source-glow.show {
+    opacity: 1;
+  }
+
   /* 予告: 画面を斜めに走る金の光。この後に必ず本演出が来る(ニアミス禁止) */
   .foreshadow {
     position: absolute;
@@ -351,6 +366,38 @@ export function createOverlay() {
     }
   }
 
+  /** 出題元の段落に光の枠を重ねる。スクロールに追従し、解除関数を返す。 */
+  function attachSourceGlow(el) {
+    const g = document.createElement('div');
+    g.className = 'source-glow';
+    field.append(g);
+    let raf = null;
+    const update = () => {
+      const r = el.getBoundingClientRect();
+      g.style.left = `${r.left - 6}px`;
+      g.style.top = `${r.top - 6}px`;
+      g.style.width = `${r.width + 12}px`;
+      g.style.height = `${r.height + 12}px`;
+    };
+    const onMove = () => {
+      if (raf) return;
+      raf = requestAnimationFrame(() => {
+        raf = null;
+        update();
+      });
+    };
+    update();
+    requestAnimationFrame(() => g.classList.add('show'));
+    addEventListener('scroll', onMove, { passive: true });
+    addEventListener('resize', onMove, { passive: true });
+    return () => {
+      removeEventListener('scroll', onMove);
+      removeEventListener('resize', onMove);
+      g.classList.remove('show');
+      setTimeout(() => g.remove(), 550);
+    };
+  }
+
   /** 大当たり。予告→縁光二連→特濃の雨+星の三波。約5秒のウォーー。 */
   function fireJackpot() {
     fireForeshadow();
@@ -427,8 +474,9 @@ export function createOverlay() {
      * 責めない: 不正解を罰しない・採点を残さない・無視したら黙って消える。
      * 教えない: 正誤も解説も言葉にしない。正解の選択肢が光る+星だけ。
      */
-    showQuiz(quiz, { onAnswer, rewardTier = 'shower' } = {}) {
+    showQuiz(quiz, { onAnswer, rewardTier = 'shower', sourceEl = null } = {}) {
       dismissHint(); // ヒントカードと同じ場所に出すので置き換える
+      const detachGlow = sourceEl ? attachSourceGlow(sourceEl) : null;
       const el = document.createElement('div');
       el.className = 'quiz';
       const q = document.createElement('div');
@@ -447,6 +495,7 @@ export function createOverlay() {
 
       function removeCard() {
         clearTimeout(ignoreTimer);
+        detachGlow?.();
         el.classList.remove('show');
         setTimeout(() => el.remove(), 450);
       }

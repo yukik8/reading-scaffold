@@ -211,12 +211,20 @@ function maybeQuizInsteadOfHint() {
 
 async function startQuiz() {
   quizInFlight = true;
-  // 読了済み段落のうち最長のものを素材にする(情報量が多く問題を作りやすい)
-  let best = '';
-  for (let i = 0; i <= Math.min(maxDepthIdx, paragraphs.length - 1); i += 1) {
-    const t = paragraphs[i].innerText ?? '';
-    if (t.length > best.length) best = t;
-  }
+  // 素材は「直近に読んだ段落」から選ぶ — いま頭に残っているものについて聞く。
+  // 直近4段落のうち最長のもの。短すぎる場合だけ読了済み全体に広げる
+  const end = Math.min(maxDepthIdx, paragraphs.length - 1);
+  const pick = (from) => {
+    let idx = -1;
+    for (let i = from; i <= end; i += 1) {
+      const t = paragraphs[i].innerText ?? '';
+      if (idx < 0 || t.length > (paragraphs[idx].innerText ?? '').length) idx = i;
+    }
+    return idx;
+  };
+  let sourceIdx = pick(Math.max(0, end - 3));
+  if ((paragraphs[sourceIdx]?.innerText ?? '').length < 80) sourceIdx = pick(0);
+  const best = paragraphs[sourceIdx]?.innerText ?? '';
   let res = null;
   try {
     res = await chrome.runtime.sendMessage({
@@ -237,6 +245,8 @@ async function startQuiz() {
     theta >= QUIZ.jackpotMinTheta ? 'jackpot' : theta >= QUIZ.rainMinTheta ? 'rain' : 'shower';
   overlay.showQuiz(res.quiz, {
     rewardTier,
+    // 出題元の段落を光の枠で指す(言葉ではなく光で「この段落の話」と伝える)
+    sourceEl: paragraphs[sourceIdx]?.isConnected ? paragraphs[sourceIdx] : null,
     onAnswer: (correct) => {
       report(EventType.QUIZ_ANSWERED, { correct });
       if (correct && rewardTier !== 'shower') {
