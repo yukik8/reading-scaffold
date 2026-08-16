@@ -542,6 +542,7 @@ export function createOverlay() {
       el.append(q);
 
       let answered = false;
+      const shownAt = Date.now(); // 回答までの迷い時間(latency)計測用
       let ignoreTimer = setTimeout(() => {
         if (!answered) removeCard();
       }, 25_000);
@@ -576,7 +577,7 @@ export function createOverlay() {
           } else {
             burst(field, 8, { delaySpread: 0.6 }); // 参加への小さなきらめき(責めない)
           }
-          onAnswer?.(correct);
+          onAnswer?.(correct, i, Date.now() - shownAt);
           setTimeout(removeCard, correct ? (rewardTier === 'shower' ? 3_000 : 5_500) : 5_000);
         });
         el.append(b);

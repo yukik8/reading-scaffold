@@ -1,29 +1,53 @@
-// タペリング制御器 v0。全部if文で、機械学習はしない。
+// タペリング制御器 v0(連続θ版・2026-08-16改訂)。全部素朴な式で、機械学習はしない。
+//
+// Level 5段階は廃止した。段差(8→5は37%減)は本人が気づき得るため、
+// Weber-Fechnerの法則(気づける最小変化=現在量の約10〜20%)に基づき、
+// JND未満の乗算的漸減 θ←θ×(1−α) にする。
 //
 // 不変条件(このファイルの外から壊せないようにする):
-//   1. θの目標値は常に0。エンゲージメント指標(滞在時間・表示回数など)を入力にしない。
-//   2. 1日に動かせるのは1段まで。
-//   3. Level 5到達後は監視のみ。補助なし読書時間が落ちたときだけ一時的に再展開する。
+//   1. θの目標値は常に0。エンゲージメント指標もクイズ正誤も入力にしない。
+//   2. 1日の総変化は±maxDailyChangeRatioまで。
+//   3. 卒業(θ=0)後は監視のみ。再展開はホメオスタットだけが行う。
 
-import { THETA_BY_LEVEL, MAX_LEVEL, CONTROLLER, SUCCESS } from '../shared/config.js';
-
-export function thetaFor(level) {
-  return THETA_BY_LEVEL[Math.min(Math.max(level, 0), MAX_LEVEL)];
-}
+import { THETA_MAX, CONTROLLER, SUCCESS, THETA_NOISE } from '../shared/config.js';
 
 export function isSuccess(session) {
   return session.read_ms >= SUCCESS.minReadMs && session.escapes <= SUCCESS.maxEscapes;
 }
 
 /**
- * セッション終了ごとに1回だけ呼ぶ。
+ * セッション開始時の実効θ。基準θに±THETA_NOISEの揺らぎを乗せる。
+ * 日々の揺らぎが漸減トレンドを隠す(迷彩)。手動設定直後もこの揺らぎは掛かる。
+ */
+export function effectiveTheta(base) {
+  if (base <= 0) return 0;
+  const jitter = 1 + (Math.random() * 2 - 1) * THETA_NOISE;
+  return Math.min(THETA_MAX, base * jitter);
+}
+
+/**
+ * セッション終了ごとに1回だけ呼ぶ(W3でCONTROLLER.enabled時に配線)。
  * 昇降は本人に通知しない(気づかれない速度で減らすため)。
- * @returns {{ level: number, success_streak: number, fail_streak: number }}
+ * @param {object} state - { theta, success_streak, fail_streak, day, day_start_theta, ... }
+ * @param {object} session - 終了したセッション(read_ms, escapes)
+ * @param {string} today - dateKey(例 '2026-08-16')。1日上限の判定に使う
  */
 export function nextState(state, session, today) {
-  let { level, success_streak, fail_streak, last_level_change_date } = state;
+  let {
+    theta,
+    success_streak = 0,
+    fail_streak = 0,
+    day = null,
+    day_start_theta = null,
+  } = state;
 
-  if (isSuccess(session)) {
+  if (day !== today || day_start_theta === null) {
+    day = today;
+    day_start_theta = theta;
+  }
+
+  const success = isSuccess(session);
+  if (success) {
     success_streak += 1;
     fail_streak = 0;
   } else {
@@ -31,24 +55,26 @@ export function nextState(state, session, today) {
     success_streak = 0;
   }
 
-  const movedToday = last_level_change_date === today;
-  if (!movedToday) {
-    if (success_streak >= CONTROLLER.successStreakToPromote && level < MAX_LEVEL) {
-      level += 1; // θを下げる
-      success_streak = 0;
-      last_level_change_date = today;
-    } else if (fail_streak >= CONTROLLER.failStreakToDemote && level > 0) {
-      level -= 1; // θを上げる
+  if (theta > 0) {
+    if (success) {
+      theta *= 1 - CONTROLLER.alpha;
+    } else if (fail_streak >= CONTROLLER.failStreakToRaise) {
+      theta = Math.min(THETA_MAX, theta * (1 + CONTROLLER.beta));
       fail_streak = 0;
-      last_level_change_date = today;
     }
+    // 不変条件: 1日の総変化は±maxDailyChangeRatioまで
+    const lo = day_start_theta * (1 - CONTROLLER.maxDailyChangeRatio);
+    const hi = Math.min(THETA_MAX, day_start_theta * (1 + CONTROLLER.maxDailyChangeRatio));
+    theta = Math.min(hi, Math.max(lo, theta));
+    // 乗算は0に到達しないため、十分小さくなったら卒業
+    if (theta < CONTROLLER.graduateBelow) theta = 0;
   }
 
-  return { level, success_streak, fail_streak, last_level_change_date, theta: thetaFor(level) };
+  return { ...state, theta, success_streak, fail_streak, day, day_start_theta };
 }
 
 /**
- * ホメオスタットモード(Level 5到達後)。
+ * ホメオスタットモード(卒業後)。
  * TODO(W3): unassisted_read_min の4週移動平均が homeostatDropRatio を超えて落ちたら
  * 一時的にθを再展開し、回復したら再び0へ戻す。
  */

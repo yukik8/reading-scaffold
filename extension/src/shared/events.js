@@ -43,7 +43,7 @@ export const Msg = {
   REPORT: 'report', // content scriptからの計測報告(EventTypeを載せる)
   GET_STATUS: 'get_status',
   GET_MIRROR: 'get_mirror',
-  SET_LEVEL: 'set_level', // θ手動ダイヤル(ドッグフーディング用。W3で自動化)
+  SET_THETA: 'set_theta', // θ手動ダイヤル(連続値。ドッグフーディング用、W3で自動化)
   QUIZ_REQUEST: 'quiz_request', // content→SW: 段落テキストからクイズ生成(SWがサーバへfetch)
   WIPE_ALL: 'wipe_all',
 };

@@ -12,8 +12,7 @@ const v = new URL(import.meta.url).search;
 const mod = (path) => import(chrome.runtime.getURL(path) + v);
 
 const { Msg, EventType } = await mod('src/shared/events.js');
-const { SESSION, AMBIENT, THETA_BY_LEVEL, EFFECT_TIERS, QUIZ } =
-  await mod('src/shared/config.js');
+const { SESSION, AMBIENT, THETA_MAX, EFFECT_TIERS, QUIZ } = await mod('src/shared/config.js');
 const { createOverlay, setTextColumn } = await mod('src/content/overlay.js');
 const { pickHint } = await mod('src/content/hints.js');
 
@@ -273,15 +272,20 @@ async function startQuiz() {
   quizUsed = true;
   hintsShown += 1;
   report(EventType.HINT_SHOWN, { hint_id: 'quiz_llm', kind: 'quiz' });
-  // 正解時の演出の強さはθ連動: 低Levelほど盛大に、卒業に向けて静かになる
+  // 正解時の演出の強さはθ連動: θが高いほど盛大に、卒業に向けて静かになる
   const rewardTier =
     theta >= QUIZ.jackpotMinTheta ? 'jackpot' : theta >= QUIZ.rainMinTheta ? 'rain' : 'shower';
   overlay.showQuiz(res.quiz, {
     rewardTier,
     // 出題元の段落を光の枠で指す(言葉ではなく光で「この段落の話」と伝える)
     sourceEl: paragraphs[sourceIdx]?.isConnected ? paragraphs[sourceIdx] : null,
-    onAnswer: (correct) => {
-      report(EventType.QUIZ_ANSWERED, { correct });
+    onAnswer: (correct, chosenIndex, latencyMs) => {
+      report(EventType.QUIZ_ANSWERED, {
+        quiz_id: res.quiz_id ?? null,
+        correct,
+        chosen_index: chosenIndex,
+        latency_ms: latencyMs,
+      });
       if (correct && rewardTier !== 'shower') {
         report(EventType.EFFECT_SHOWN, { effect_id: `quiz_${rewardTier}` });
       }
@@ -345,7 +349,7 @@ const ambientTimer = AMBIENT.enabled
       if (document.hidden || mode !== 'full' || theta <= 0) return;
       if (!isReading()) return; // 読む手が止まっているときに光らせない
       // 均等に湧かせず、たまに「キラッ」と固まって瞬く(予測不能性)
-      const p = (theta / THETA_BY_LEVEL[0]) ** 2 * AMBIENT.maxClusterChance;
+      const p = (theta / THETA_MAX) ** 2 * AMBIENT.maxClusterChance;
       if (Math.random() < p) overlay.glint(3 + Math.floor(Math.random() * 5));
     }, AMBIENT.tickMs)
   : null;
@@ -384,6 +388,7 @@ addEventListener('pagehide', () => stop(), { once: true });
 report('content_ready', {
   article_len_words: totalWords,
   paragraph_count: paragraphs.length,
+  lang: isCJK ? 'cjk' : 'latin',
   mode,
 });
 
@@ -407,7 +412,7 @@ planHints();
 // 動いているかを一目で判別する(θ=0でヒントが出ないのは仕様、が見えるように)。
 if (mode === 'full') {
   const ver = chrome.runtime.getManifest?.().version ?? '?';
-  const lv = sessionInfo ? `Level ${sessionInfo.level}・θ=${theta}` : '設定未取得';
+  const lv = sessionInfo ? `θ=${Number(theta).toFixed(1)}` : '設定未取得';
   overlay.showNotice(
     `計測をはじめました(本文 約${totalWords.toLocaleString()}語)· ${lv} · v${ver}`,
     4_000,

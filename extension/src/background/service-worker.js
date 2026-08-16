@@ -15,11 +15,12 @@ import {
   onTabRemoved,
   onTabUpdated,
   onWatchdog,
-  setLevel,
+  setTheta,
   WATCHDOG_ALARM,
 } from './session.js';
 import { buildMirror } from './mirror.js';
-import { wipeAll, getState } from './store.js';
+import { wipeAll, getState, sha256Hex, getQuizByHash, addQuiz } from './store.js';
+import { getCurrent as getCurrentSession } from './session.js';
 
 chrome.tabs.onActivated.addListener((activeInfo) => {
   onTabActivated(activeInfo);
@@ -63,8 +64,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         sendResponse({ ok: true, session: await getCurrent(), state: await getState() });
         break;
 
-      case Msg.SET_LEVEL:
-        sendResponse({ ok: true, ...(await setLevel(msg.level)) });
+      case Msg.SET_THETA:
+        sendResponse({ ok: true, ...(await setTheta(msg.theta)) });
         break;
 
       case Msg.GET_MIRROR:
@@ -85,7 +86,32 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             signal: ctrl.signal,
           });
           clearTimeout(timer);
-          sendResponse(await r.json());
+          const data = await r.json();
+          // 記録層: 出題されたクイズを保存(同一段落は再利用)。失敗しても表示は妨げない
+          if (data?.ok && data.quiz) {
+            try {
+              const text = (msg.paragraph_text ?? '').trim().slice(0, 2000);
+              const hash = await sha256Hex(text);
+              const existing = await getQuizByHash(hash);
+              if (existing) {
+                data.quiz_id = existing.quiz_id;
+              } else {
+                const current = await getCurrentSession();
+                data.quiz_id = await addQuiz({
+                  page_id: current?.page_id ?? null,
+                  paragraph_hash: hash,
+                  paragraph_excerpt: text.slice(0, 80),
+                  question: data.quiz.question,
+                  choices: data.quiz.choices,
+                  answer_index: data.quiz.answer_index,
+                  created_at: Date.now(),
+                });
+              }
+            } catch {
+              /* 記録失敗は無視 */
+            }
+          }
+          sendResponse(data);
         } catch {
           sendResponse({ ok: false, error: 'unreachable' });
         }

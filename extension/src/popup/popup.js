@@ -1,5 +1,5 @@
 import { Msg } from '../shared/events.js';
-import { THETA_BY_LEVEL, MAX_LEVEL } from '../shared/config.js';
+import { THETA_MAX } from '../shared/config.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -35,19 +35,18 @@ $('wipe').addEventListener('click', async () => {
   await render();
 });
 
-function levelText(level) {
-  const theta = THETA_BY_LEVEL[level];
-  const note = level === 0 ? '(補助が最大)' : level === MAX_LEVEL ? '(補助なし)' : '';
-  return `Level ${level}${note} — ヒント頻度 θ=${theta}/1,000語`;
+function thetaText(theta) {
+  const note = theta === 0 ? '(補助なし)' : theta >= THETA_MAX ? '(補助が最大)' : '';
+  return `θ=${theta.toFixed(1)}/1,000語${note}`;
 }
 
-$('level').addEventListener('input', () => {
-  $('level-label').textContent = levelText(Number($('level').value));
+$('theta').addEventListener('input', () => {
+  $('theta-label').textContent = thetaText(Number($('theta').value));
 });
 
-$('level').addEventListener('change', async () => {
-  const res = await send(Msg.SET_LEVEL, { level: Number($('level').value) });
-  if (res?.ok) $('level-label').textContent = levelText(res.level);
+$('theta').addEventListener('change', async () => {
+  const res = await send(Msg.SET_THETA, { theta: Number($('theta').value) });
+  if (res?.ok) $('theta-label').textContent = thetaText(res.theta);
 });
 
 function drawChart(weeks) {
@@ -93,9 +92,9 @@ async function render() {
     $('status').textContent = `計測中: ${session.domain}(${min}分)`;
   }
 
-  const level = status?.state?.level ?? 0;
-  $('level').value = String(level);
-  $('level-label').textContent = levelText(level);
+  const theta = status?.state?.theta ?? THETA_MAX;
+  $('theta').value = String(theta);
+  $('theta-label').textContent = thetaText(theta);
 
   const res = await send(Msg.GET_MIRROR);
   if (!res?.ok) return;

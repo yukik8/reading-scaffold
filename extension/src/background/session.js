@@ -20,10 +20,19 @@
 // ブラウザ終了で消える — セッションという意味に合う)。
 
 import { EventType, EndReason, SessionState } from '../shared/events.js';
-import { SESSION, SUCCESS, MAX_LEVEL } from '../shared/config.js';
+import { SESSION, SUCCESS, THETA_MAX } from '../shared/config.js';
 import { dateKey } from '../shared/time.js';
-import { appendEvent, putSession, getState, putState } from './store.js';
-import { thetaFor } from './controller.js';
+import {
+  appendEvent,
+  putSession,
+  getState,
+  putState,
+  getPage,
+  putPage,
+  addQuizAttempt,
+  sha256Hex,
+} from './store.js';
+import { effectiveTheta } from './controller.js';
 
 const CURRENT_KEY = 'currentSession';
 export const WATCHDOG_ALARM = 'rs-watchdog';
@@ -57,19 +66,26 @@ export async function startSession(tabId) {
 
   const state = await getState();
   const now = Date.now();
+
+  // 記録層: URL正規化(クエリ・フラグメント除去)→ page_id
+  const u = new URL(tab.url);
+  const normalizedUrl = u.origin + u.pathname;
+  const pageId = await sha256Hex(normalizedUrl);
+
   const session = {
     session_id: crypto.randomUUID(),
     tab_id: tabId,
     window_id: tab.windowId,
     // タブ内遷移の判定にだけ使う。storage.session限りで、IndexedDBには書かない。
     page_url: tab.url.split('#')[0],
+    page_id: pageId,
     state: SessionState.ACTIVE,
     started_at: now,
     last_event_at: now,
     escaped_at: null,
     domain,
-    level: state.level,
-    theta: state.theta,
+    theta_base: state.theta, // 制御器が持つ基準θ
+    theta: effectiveTheta(state.theta), // このセッションの実効θ(±ノイズ=迷彩)
     article_len_words: null,
     mode: null, // 'full' | 'measure-only'(本文検出失敗)
     read_ms: 0,
@@ -82,9 +98,28 @@ export async function startSession(tabId) {
   await appendEvent(session.session_id, EventType.SESSION_START, {
     url_domain: domain,
     article_len_words: null,
-    level: session.level,
     theta: session.theta,
+    theta_base: session.theta_base,
   });
+
+  // 記録層: pagesをupsert(読書メモリの台帳。ローカルのみ)
+  const page = (await getPage(pageId)) ?? {
+    page_id: pageId,
+    url: normalizedUrl,
+    title: null,
+    domain,
+    lang: null,
+    word_count: null,
+    summary: null,
+    first_read_at: now,
+    last_read_at: now,
+    read_count: 0,
+    total_read_ms: 0,
+    best_completion_pct: 0,
+  };
+  if (tab.title) page.title = tab.title;
+  page.last_read_at = now;
+  await putPage(page);
 
   // content script注入はセッション保存の後。注入されたスクリプトは起動直後に
   // GET_STATUSでθを取りに来るため、先に注入するとセッション未保存の瞬間に
@@ -136,16 +171,33 @@ export async function endSession(reason) {
     date: dateKey(session.started_at),
     started_at: session.started_at,
     domain: session.domain,
-    level: session.level,
-    theta: session.theta,
+    page_id: session.page_id ?? null, // 記録層への橋(ローカル内のみ)
+    theta: session.theta, // このセッションの実効θ
+    theta_base: session.theta_base, // 制御器の基準θ
     read_ms: session.read_ms,
     escapes: session.escapes,
     completion_pct: session.completion_pct,
     success,
-    // 補助なし判定に使う。W1ではヒントが無いので常に0。
+    // 補助なし判定に使う。
     hints_shown: session.hints_shown,
     effects_shown: session.effects_shown,
   });
+
+  // 記録層: pagesへ累計を積む
+  if (session.page_id) {
+    try {
+      const page = await getPage(session.page_id);
+      if (page) {
+        page.read_count += 1;
+        page.total_read_ms += session.read_ms;
+        page.best_completion_pct = Math.max(page.best_completion_pct, session.completion_pct);
+        page.last_read_at = Date.now();
+        await putPage(page);
+      }
+    } catch {
+      /* 記録失敗は終了処理を妨げない */
+    }
+  }
 
   // 制御器の自動昇降はW3で接続する(CONTROLLER.enabled)。
   // W1で動かすとヒント未実装のままLevelだけが動き、記録が実態と乖離するため。
@@ -177,6 +229,19 @@ export async function onReport(event, payload, sender) {
     case 'content_ready':
       session.article_len_words = payload.article_len_words;
       session.mode = payload.mode;
+      // 記録層: 本文の言語と語数をページに反映
+      if (session.page_id) {
+        try {
+          const page = await getPage(session.page_id);
+          if (page) {
+            page.word_count = payload.article_len_words ?? page.word_count;
+            page.lang = payload.lang ?? page.lang;
+            await putPage(page);
+          }
+        } catch {
+          /* 記録失敗は計測を妨げない */
+        }
+      }
       break;
 
     case EventType.DWELL_TICK:
@@ -212,8 +277,23 @@ export async function onReport(event, payload, sender) {
 
     case EventType.QUIZ_ANSWERED:
       await appendEvent(session.session_id, EventType.QUIZ_ANSWERED, {
+        quiz_id: payload.quiz_id ?? null,
         correct: payload.correct === true,
       });
+      // 記録層: 回答の記録
+      try {
+        await addQuizAttempt({
+          quiz_id: payload.quiz_id ?? null,
+          page_id: session.page_id ?? null,
+          session_id: session.session_id,
+          answered_at: now,
+          chosen_index: payload.chosen_index ?? null,
+          correct: payload.correct === true,
+          latency_ms: payload.latency_ms ?? null,
+        });
+      } catch {
+        /* 記録失敗は計測を妨げない */
+      }
       break;
 
     case EventType.EFFECT_SHOWN: // レア演出(金の雨)。補助の一種として数える
@@ -299,28 +379,28 @@ export async function onWatchdog() {
 }
 
 /**
- * θ手動ダイヤル(ドッグフーディング用、W3で自動化)。
+ * θ手動ダイヤル(ドッグフーディング用、W3で自動化)。連続値[0, THETA_MAX]。
  * 進行中のセッションがあれば即時反映する — 「θを変えると読書体験が変わる」の確認用。
  */
-export async function setLevel(level) {
-  const clamped = Math.min(Math.max(Math.round(level), 0), MAX_LEVEL);
+export async function setTheta(value) {
+  const clamped = Math.min(Math.max(Number(value) || 0, 0), THETA_MAX);
   const state = await getState();
-  state.level = clamped;
-  state.theta = thetaFor(clamped);
+  state.theta = clamped;
+  state.day_start_theta = clamped; // 手動設定は1日上限の基準もリセット
   await putState(state);
 
   const session = await getCurrent();
   if (session) {
-    session.level = clamped;
-    session.theta = state.theta;
+    session.theta_base = clamped;
+    session.theta = clamped; // 手動時はノイズなしの直値(ダイヤルの体感確認用)
     await setCurrent(session);
     try {
-      await chrome.tabs.sendMessage(session.tab_id, { type: 'rs_theta', theta: state.theta });
+      await chrome.tabs.sendMessage(session.tab_id, { type: 'rs_theta', theta: clamped });
     } catch {
       /* タブが応答しなければ次のセッションから効く */
     }
   }
-  return { level: clamped, theta: state.theta };
+  return { theta: clamped };
 }
 
 async function escape(session, toDomain) {
