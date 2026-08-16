@@ -11,15 +11,27 @@
   }
 }
 
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
 body {
   margin: 0;
-  width: 320px;
+  width: 344px;
+  overflow-x: hidden;
 }
 
 main {
-  padding: 16px;
+  padding: 18px;
   display: grid;
   gap: 16px;
+}
+
+/* グリッド子のmin-width:autoが長いnowrap文字列で幅を押し広げるのを防ぐ */
+main > * {
+  min-width: 0;
 }
 
 #controls {
@@ -140,6 +152,7 @@ h2 {
   padding: 6px 8px;
   border-radius: 8px;
   cursor: pointer;
+  min-width: 0; /* 書名のnowrapでカラムが広がらないように */
 }
 
 #library li:hover {
@@ -148,6 +161,7 @@ h2 {
 
 .lib-title {
   display: block;
+  max-width: 100%;
   font-size: 12.5px;
   white-space: nowrap;
   overflow: hidden;
