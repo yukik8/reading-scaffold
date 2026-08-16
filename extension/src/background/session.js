@@ -210,6 +210,12 @@ export async function onReport(event, payload, sender) {
       });
       break;
 
+    case EventType.QUIZ_ANSWERED:
+      await appendEvent(session.session_id, EventType.QUIZ_ANSWERED, {
+        correct: payload.correct === true,
+      });
+      break;
+
     case EventType.EFFECT_SHOWN: // レア演出(金の雨)。補助の一種として数える
       session.effects_shown += 1;
       await appendEvent(session.session_id, EventType.EFFECT_SHOWN, {

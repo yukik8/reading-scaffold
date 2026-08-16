@@ -64,6 +64,19 @@ export const EFFECT_TIERS = {
   rare: { p: 0.12 }, // レア: 金の雨。約1/8
 };
 
+// クイズ(理解連動Micro Content)。ローカルのFastAPIサーバ経由でLLMが出題する。
+// ヒント枠の一部がクイズに化ける形なので頻度はθ配下のまま。1セッション1問まで。
+// サーバが落ちていれば静かに何も出さない(読書を壊さない)。
+export const QUIZ = {
+  enabled: true,
+  // ヒント枠がクイズに化ける確率
+  p: 0.3,
+  // 読了済み段落がこれ未満なら出さない(素材不足)
+  minParagraphsRead: 3,
+  endpoint: 'http://127.0.0.1:8787/quiz',
+  timeoutMs: 12_000,
+};
+
 // success := read_ms >= 5分 かつ escapes <= 1
 export const SUCCESS = {
   minReadMs: 5 * 60_000,

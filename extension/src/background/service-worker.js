@@ -4,6 +4,7 @@
 // セッションが無いときは何も読まず何も書かずに戻る — 「計測はセッション中のみ」。
 
 import { Msg } from '../shared/events.js';
+import { QUIZ } from '../shared/config.js';
 import {
   startSession,
   endSession,
@@ -69,6 +70,27 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       case Msg.GET_MIRROR:
         sendResponse({ ok: true, mirror: await buildMirror() });
         break;
+
+      case Msg.QUIZ_REQUEST: {
+        // 本文テキストがページの外に出る唯一の経路。宛先はローカルサーバのみで、
+        // サーバは保存もログもしない(server/main.py)。失敗は静かに握りつぶし、
+        // content側は通常ヒントに戻る — クイズの都合で読書を壊さない。
+        try {
+          const ctrl = new AbortController();
+          const timer = setTimeout(() => ctrl.abort(), QUIZ.timeoutMs);
+          const r = await fetch(QUIZ.endpoint, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ paragraph_text: msg.paragraph_text ?? '' }),
+            signal: ctrl.signal,
+          });
+          clearTimeout(timer);
+          sendResponse(await r.json());
+        } catch {
+          sendResponse({ ok: false, error: 'unreachable' });
+        }
+        break;
+      }
 
       case Msg.WIPE_ALL:
         await endSession('manual');

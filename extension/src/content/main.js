@@ -12,7 +12,8 @@ const v = new URL(import.meta.url).search;
 const mod = (path) => import(chrome.runtime.getURL(path) + v);
 
 const { Msg, EventType } = await mod('src/shared/events.js');
-const { SESSION, AMBIENT, THETA_BY_LEVEL, EFFECT_TIERS } = await mod('src/shared/config.js');
+const { SESSION, AMBIENT, THETA_BY_LEVEL, EFFECT_TIERS, QUIZ } =
+  await mod('src/shared/config.js');
 const { createOverlay } = await mod('src/content/overlay.js');
 const { pickHint } = await mod('src/content/hints.js');
 
@@ -190,8 +191,55 @@ function rollTier() {
   return 'normal';
 }
 
+// ---- クイズ(理解連動Micro Content・LLM経由) -----------------------------
+//
+// ヒント枠の一部が確率でクイズに化ける。素材は読了済み段落のみ(未読からは
+// ネタバレになるので出さない)。1セッション1問。サーバ不在・生成失敗は
+// 静かに諦める — クイズの都合で読書を止めない。
+
+let quizUsed = false;
+let quizInFlight = false;
+
+function maybeQuizInsteadOfHint() {
+  if (!QUIZ.enabled || quizUsed || quizInFlight) return false;
+  if (mode !== 'full') return false;
+  if (maxDepthIdx + 1 < QUIZ.minParagraphsRead) return false;
+  if (Math.random() >= QUIZ.p) return false;
+  startQuiz();
+  return true;
+}
+
+async function startQuiz() {
+  quizInFlight = true;
+  // 読了済み段落のうち最長のものを素材にする(情報量が多く問題を作りやすい)
+  let best = '';
+  for (let i = 0; i <= Math.min(maxDepthIdx, paragraphs.length - 1); i += 1) {
+    const t = paragraphs[i].innerText ?? '';
+    if (t.length > best.length) best = t;
+  }
+  let res = null;
+  try {
+    res = await chrome.runtime.sendMessage({
+      type: Msg.QUIZ_REQUEST,
+      paragraph_text: best.slice(0, 2000),
+    });
+  } catch {
+    /* SW不在。諦める */
+  }
+  quizInFlight = false;
+  if (!res?.ok || !res.quiz) return;
+  if (quizUsed || !isReading()) return; // 生成中に状況が変わっていたら出さない
+  quizUsed = true;
+  hintsShown += 1;
+  report(EventType.HINT_SHOWN, { hint_id: 'quiz_llm', kind: 'quiz' });
+  overlay.showQuiz(res.quiz, {
+    onAnswer: (correct) => report(EventType.QUIZ_ANSWERED, { correct }),
+  });
+}
+
 function showHint(idx) {
   pendingHintAt.delete(idx);
+  if (maybeQuizInsteadOfHint()) return; // このヒント枠はクイズに使う
   hintsShown += 1;
   const { hint_id, text } = pickHint({
     pct: completionPct(),

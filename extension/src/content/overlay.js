@@ -86,6 +86,77 @@ const CSS = `
     100% { opacity: 0; transform: translate(var(--dx), var(--dy)) rotate(220deg) scale(0.1); }
   }
 
+  /* クイズカード。ヒントより一回り大きいが、無視すれば消える(操作の強制はしない) */
+  .quiz {
+    position: fixed;
+    right: 20px;
+    bottom: 20px;
+    z-index: 2147483646;
+    width: 300px;
+    padding: 14px;
+    border-radius: 12px;
+    background: rgba(28, 28, 30, 0.94);
+    color: rgba(255, 255, 255, 0.92);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    font-size: 13px;
+    line-height: 1.6;
+    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.25);
+    opacity: 0;
+    transform: translateY(6px);
+    transition: opacity 0.4s ease, transform 0.4s ease;
+  }
+  @media (prefers-color-scheme: light) {
+    .quiz {
+      background: rgba(255, 255, 255, 0.97);
+      color: rgba(0, 0, 0, 0.82);
+      border-color: rgba(0, 0, 0, 0.12);
+      box-shadow: 0 4px 24px rgba(0, 0, 0, 0.15);
+    }
+  }
+  .quiz.show {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  .quiz .q {
+    display: flex;
+    gap: 8px;
+    align-items: flex-start;
+    margin-bottom: 10px;
+  }
+  .quiz .q .ring {
+    margin-top: 3px;
+  }
+  .quiz button.choice {
+    display: block;
+    width: 100%;
+    text-align: left;
+    font: inherit;
+    font-size: 12.5px;
+    padding: 7px 10px;
+    margin-top: 6px;
+    border-radius: 8px;
+    border: 1px solid rgba(128, 128, 128, 0.35);
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+  }
+  .quiz button.choice:hover {
+    border-color: currentColor;
+  }
+  .quiz button.choice.correct {
+    border-color: #e6a817;
+    box-shadow: 0 0 0 1px #e6a817 inset;
+  }
+  .quiz button.choice:disabled {
+    cursor: default;
+    opacity: 0.75;
+  }
+  .quiz .result {
+    margin-top: 10px;
+    font-size: 12px;
+    opacity: 0.85;
+  }
+
   /* 予告: 画面を斜めに走る金の光。この後に必ず本演出が来る(ニアミス禁止) */
   .foreshadow {
     position: absolute;
@@ -333,6 +404,65 @@ export function createOverlay() {
     /** 地の演出: 読んでいる間に漂う小さな星。ヒントの波より小粒で静か。 */
     ambient(count) {
       burst(field, count, { delaySpread: 1.0, sizeMin: 5, sizeMax: 12 });
+    },
+
+    /**
+     * クイズカード。quiz = { question, choices[3], answer_index, comment }。
+     * 責めない原則: 不正解を罰しない・採点を残さない・無視したら黙って消える。
+     */
+    showQuiz(quiz, { onAnswer } = {}) {
+      dismissHint(); // ヒントカードと同じ場所に出すので置き換える
+      const el = document.createElement('div');
+      el.className = 'quiz';
+      const q = document.createElement('div');
+      q.className = 'q';
+      const ring = document.createElement('span');
+      ring.className = 'ring';
+      const qText = document.createElement('span');
+      qText.textContent = quiz.question;
+      q.append(ring, qText);
+      el.append(q);
+
+      let answered = false;
+      let ignoreTimer = setTimeout(() => {
+        if (!answered) removeCard();
+      }, 25_000);
+
+      function removeCard() {
+        clearTimeout(ignoreTimer);
+        el.classList.remove('show');
+        setTimeout(() => el.remove(), 450);
+      }
+
+      const buttons = quiz.choices.map((text, i) => {
+        const b = document.createElement('button');
+        b.className = 'choice';
+        b.type = 'button';
+        b.textContent = text;
+        b.addEventListener('click', () => {
+          if (answered) return;
+          answered = true;
+          const correct = i === quiz.answer_index;
+          for (const btn of buttons) btn.disabled = true;
+          buttons[quiz.answer_index].classList.add('correct');
+          const result = document.createElement('div');
+          result.className = 'result';
+          result.textContent = correct
+            ? `そのとおり。${quiz.comment ?? ''}`
+            : `正解は「${quiz.choices[quiz.answer_index]}」。${quiz.comment ?? ''}`;
+          el.append(result);
+          // 正解は星の雨、不正解でも参加への小さなきらめき(責めない)
+          if (correct) shower(field, [36, 20]);
+          else burst(field, 8, { delaySpread: 0.6 });
+          onAnswer?.(correct);
+          setTimeout(removeCard, correct ? 4_000 : 6_000);
+        });
+        el.append(b);
+        return b;
+      });
+
+      shadow.append(el);
+      requestAnimationFrame(() => el.classList.add('show'));
     },
 
     /** 読了お祝い。セッション成功時のみ呼ばれる。 */

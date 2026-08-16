@@ -19,6 +19,7 @@ export const EventType = {
   HINT_SHOWN: 'hint_shown',
   HINT_CLICKED: 'hint_clicked',
   EFFECT_SHOWN: 'effect_shown',
+  QUIZ_ANSWERED: 'quiz_answered', // { correct }
   SESSION_END: 'session_end',
 };
 
@@ -43,5 +44,6 @@ export const Msg = {
   GET_STATUS: 'get_status',
   GET_MIRROR: 'get_mirror',
   SET_LEVEL: 'set_level', // θ手動ダイヤル(ドッグフーディング用。W3で自動化)
+  QUIZ_REQUEST: 'quiz_request', // content→SW: 段落テキストからクイズ生成(SWがサーバへfetch)
   WIPE_ALL: 'wipe_all',
 };
