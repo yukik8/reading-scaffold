@@ -20,7 +20,7 @@
 // ブラウザ終了で消える — セッションという意味に合う)。
 
 import { EventType, EndReason, SessionState } from '../shared/events.js';
-import { SESSION, SUCCESS, THETA_MAX, CONTROLLER } from '../shared/config.js';
+import { SESSION, SUCCESS, THETA_MAX, CONTROLLER, DEMO } from '../shared/config.js';
 import { dateKey } from '../shared/time.js';
 import {
   appendEvent,
@@ -153,8 +153,9 @@ export async function endSession(reason) {
     session.read_ms >= SUCCESS.minReadMs && session.escapes <= SUCCESS.maxEscapes;
 
   // 読了お祝いは「セッション成功、かつθ>0」のときだけ。演出もθの配下にあり、
-  // Level 5(θ=0)では何も出さない — 補助なし読書時間の定義を汚さないため。
-  const celebrate = success && session.theta > 0;
+  // θ=0では何も出さない — 補助なし読書時間の定義を汚さないため。
+  // デモ中だけは成功条件を待たず必ず出す(見せるためのモード)。
+  const celebrate = (success || DEMO.enabled) && session.theta > 0;
   if (celebrate) {
     session.effects_shown += 1;
     await appendEvent(session.session_id, EventType.EFFECT_SHOWN, {

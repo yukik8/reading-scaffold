@@ -12,7 +12,8 @@ const v = new URL(import.meta.url).search;
 const mod = (path) => import(chrome.runtime.getURL(path) + v);
 
 const { Msg, EventType } = await mod('src/shared/events.js');
-const { SESSION, AMBIENT, THETA_MAX, EFFECT_TIERS, QUIZ } = await mod('src/shared/config.js');
+const { SESSION, AMBIENT, THETA_MAX, EFFECT_TIERS, QUIZ, DEMO } =
+  await mod('src/shared/config.js');
 const { createOverlay, setTextColumn } = await mod('src/content/overlay.js');
 const { pickHint } = await mod('src/content/hints.js');
 
@@ -218,6 +219,12 @@ function planHints() {
 // 演出のレア度ロール。頻度はθが決め、ここは「大きさ」だけを予測不能にする。
 function rollTier() {
   const r = Math.random();
+  if (DEMO.enabled) {
+    // デモ: レア演出をどんどん出す
+    if (r < 0.35) return 'epic';
+    if (r < 0.8) return 'rare';
+    return 'normal';
+  }
   if (r < EFFECT_TIERS.epic.p) return 'epic';
   if (r < EFFECT_TIERS.epic.p + EFFECT_TIERS.rare.p) return 'rare';
   return 'normal';
@@ -236,7 +243,7 @@ function maybeQuizInsteadOfHint() {
   if (!QUIZ.enabled || quizUsed || quizInFlight) return false;
   if (mode !== 'full') return false;
   if (maxDepthIdx + 1 < QUIZ.minParagraphsRead) return false;
-  if (Math.random() >= QUIZ.p) return false;
+  if (!DEMO.enabled && Math.random() >= QUIZ.p) return false; // デモ中は最初の枠で必ず出す
   startQuiz();
   return true;
 }
@@ -273,8 +280,13 @@ async function startQuiz() {
   hintsShown += 1;
   report(EventType.HINT_SHOWN, { hint_id: 'quiz_llm', kind: 'quiz' });
   // 正解時の演出の強さはθ連動: θが高いほど盛大に、卒業に向けて静かになる
-  const rewardTier =
-    theta >= QUIZ.jackpotMinTheta ? 'jackpot' : theta >= QUIZ.rainMinTheta ? 'rain' : 'shower';
+  const rewardTier = DEMO.enabled
+    ? 'jackpot' // デモ中は常に大当たり
+    : theta >= QUIZ.jackpotMinTheta
+      ? 'jackpot'
+      : theta >= QUIZ.rainMinTheta
+        ? 'rain'
+        : 'shower';
   overlay.showQuiz(res.quiz, {
     rewardTier,
     // 出題元の段落を光の枠で指す(言葉ではなく光で「この段落の話」と伝える)
@@ -349,8 +361,9 @@ const ambientTimer = AMBIENT.enabled
       if (document.hidden || mode !== 'full' || theta <= 0) return;
       if (!isReading()) return; // 読む手が止まっているときに光らせない
       // 均等に湧かせず、たまに「キラッ」と固まって瞬く(予測不能性)
-      const p = (theta / THETA_MAX) ** 2 * AMBIENT.maxClusterChance;
-      if (Math.random() < p) overlay.glint(3 + Math.floor(Math.random() * 5));
+      const p =
+        (theta / THETA_MAX) ** 2 * AMBIENT.maxClusterChance * (DEMO.enabled ? 2.2 : 1);
+      if (Math.random() < Math.min(p, 0.9)) overlay.glint(3 + Math.floor(Math.random() * 5));
     }, AMBIENT.tickMs)
   : null;
 
@@ -366,7 +379,7 @@ function stop({ celebrate = false, readMin = 0 } = {}) {
   window.__readingScaffoldLoaded = false;
   if (celebrate) {
     overlay.celebrate(readMin);
-    setTimeout(() => overlay.destroy(), 2_800);
+    setTimeout(() => overlay.destroy(), DEMO.enabled ? 7_500 : 2_800);
   } else {
     overlay.destroy();
   }
