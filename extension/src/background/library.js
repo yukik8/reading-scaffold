@@ -1,7 +1,7 @@
 // ライブラリ(読書メモリの一覧)。記録層だけを読む。
 // これは「記録」カテゴリの表示: 事実の蓄積のみで、可変報酬・比較・警告は載せない。
 
-import { getAllPages, getAllQuizAttempts } from './store.js';
+import { getAllPages, getAllQuizAttempts, getAllQuizzes, getAllSessions } from './store.js';
 
 /**
  * @returns {Promise<Array<{
@@ -36,4 +36,56 @@ export async function buildLibrary(limit = 30) {
       best_completion_pct: p.best_completion_pct ?? 0,
       quiz: quizByPage.get(p.page_id) ?? { total: 0, correct: 0 },
     }));
+}
+
+/** クイズ履歴(ダッシュボード用)。問題+回答の時系列+出題元ページ名。 */
+export async function buildQuizLog() {
+  const [quizzes, attempts, pages] = await Promise.all([
+    getAllQuizzes(),
+    getAllQuizAttempts(),
+    getAllPages(),
+  ]);
+  const titleByPage = new Map(pages.map((p) => [p.page_id, p.title || p.domain]));
+  const byQuiz = new Map();
+  for (const a of attempts) {
+    const list = byQuiz.get(a.quiz_id) ?? [];
+    list.push(a);
+    byQuiz.set(a.quiz_id, list);
+  }
+  return quizzes
+    .sort((a, b) => (b.created_at ?? 0) - (a.created_at ?? 0))
+    .map((q) => ({
+      quiz_id: q.quiz_id,
+      question: q.question,
+      choices: q.choices,
+      answer_index: q.answer_index,
+      page_title: titleByPage.get(q.page_id) ?? null,
+      created_at: q.created_at,
+      attempts: (byQuiz.get(q.quiz_id) ?? [])
+        .sort((a, b) => (a.answered_at ?? 0) - (b.answered_at ?? 0))
+        .map((a) => ({ correct: a.correct, answered_at: a.answered_at })),
+    }));
+}
+
+/** 累計(ダッシュボード用)。 */
+export async function buildTotals() {
+  const [sessions, attempts, pages] = await Promise.all([
+    getAllSessions(),
+    getAllQuizAttempts(),
+    getAllPages(),
+  ]);
+  let readMs = 0;
+  let unassistedMs = 0;
+  for (const s of sessions) {
+    readMs += s.read_ms ?? 0;
+    if ((s.hints_shown ?? 0) === 0 && (s.effects_shown ?? 0) === 0) unassistedMs += s.read_ms ?? 0;
+  }
+  return {
+    sessions: sessions.length,
+    pages: pages.length,
+    read_min: Math.round(readMs / 60_000),
+    unassisted_min: Math.round(unassistedMs / 60_000),
+    quiz_total: attempts.length,
+    quiz_correct: attempts.filter((a) => a.correct).length,
+  };
 }

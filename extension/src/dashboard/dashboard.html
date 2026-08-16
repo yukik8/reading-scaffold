@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <title>reading-scaffold</title>
+    <link rel="stylesheet" href="dashboard.css" />
+  </head>
+  <body>
+    <main>
+      <header>
+        <span class="ring"></span>
+        <h1>reading-scaffold</h1>
+        <span id="ver" class="ver"></span>
+      </header>
+
+      <!-- いま: θと今週。事実のみ(目標・比較・警告なし) -->
+      <section aria-label="いま">
+        <h2>いま</h2>
+        <dl class="stats" id="now-stats">
+          <div><dt>補助量 θ</dt><dd id="theta-now">—</dd></div>
+          <div><dt>今週の読書</dt><dd id="week-min">—</dd></div>
+          <div><dt>今週のセッション</dt><dd id="week-sessions">—</dd></div>
+          <div><dt>今週の離脱率</dt><dd id="week-escape">—</dd></div>
+        </dl>
+        <div class="dial">
+          <label for="theta">補助の量(手動・後で自動漸減)</label>
+          <input id="theta" type="range" min="0" max="8" step="0.1" value="8" />
+          <p id="theta-label">—</p>
+        </div>
+      </section>
+
+      <section aria-label="週次推移">
+        <h2>補助なし読書時間(週)</h2>
+        <div id="chart"></div>
+        <p id="chart-empty" class="note" hidden>まだ記録がありません。</p>
+      </section>
+
+      <section aria-label="ライブラリ">
+        <h2>ライブラリ</h2>
+        <ul id="library" class="rows"></ul>
+        <p id="library-empty" class="note" hidden>まだ読んだものがありません。</p>
+      </section>
+
+      <section aria-label="クイズ">
+        <h2>クイズ</h2>
+        <ul id="quizzes" class="rows"></ul>
+        <p id="quizzes-empty" class="note" hidden>まだクイズは出ていません。</p>
+      </section>
+
+      <section aria-label="累計">
+        <h2>累計</h2>
+        <dl class="stats" id="totals"></dl>
+      </section>
+
+      <section aria-label="データ">
+        <h2>データ</h2>
+        <p class="note">
+          すべてこの端末のブラウザ内に保存されています。読んだページ・クイズ・生ログが
+          サーバへ送られることはありません。
+        </p>
+        <div class="actions">
+          <button id="export" type="button">JSONでエクスポート</button>
+        </div>
+        <div class="danger">
+          <p class="note">元に戻せない操作</p>
+          <button id="wipe" type="button">データを全部消す</button>
+        </div>
+      </section>
+    </main>
+    <script type="module" src="dashboard.js"></script>
+  </body>
+</html>

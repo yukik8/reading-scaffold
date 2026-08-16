@@ -29,10 +29,8 @@ $('end').addEventListener('click', async () => {
   else showError(res?.error ?? '終了できませんでした');
 });
 
-$('wipe').addEventListener('click', async () => {
-  if (!confirm('記録を全部消します。元に戻せません。')) return;
-  await send(Msg.WIPE_ALL);
-  await render();
+$('open-dashboard').addEventListener('click', () => {
+  chrome.tabs.create({ url: chrome.runtime.getURL('src/dashboard/dashboard.html') });
 });
 
 function thetaText(theta) {

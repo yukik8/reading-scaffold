@@ -1,0 +1,217 @@
+/* 簡素=熟練。popupと同じ文法(リング・tabular-nums・抑制の美学)をフルページで。 */
+:root {
+  color-scheme: light dark;
+  font-family: system-ui, -apple-system, 'Hiragino Sans', sans-serif;
+}
+
+body {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+main {
+  max-width: 680px;
+  margin: 0 auto;
+  padding: 32px 20px 64px;
+  display: grid;
+  gap: 32px;
+}
+
+header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+h1 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.ver {
+  font-size: 12px;
+  opacity: 0.5;
+  font-variant-numeric: tabular-nums;
+}
+
+.ring {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  border: 1.5px solid currentColor;
+  border-radius: 50%;
+  opacity: 0.7;
+}
+
+h2 {
+  margin: 0 0 12px;
+  font-size: 13px;
+  font-weight: 600;
+  opacity: 0.7;
+}
+
+.note {
+  font-size: 12px;
+  opacity: 0.6;
+  margin: 4px 0;
+}
+
+/* 統計 */
+.stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 8px 16px;
+  margin: 0;
+}
+
+.stats div {
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, currentColor 12%, transparent);
+  border-radius: 10px;
+}
+
+.stats dt {
+  font-size: 11px;
+  opacity: 0.6;
+}
+
+.stats dd {
+  margin: 2px 0 0;
+  font-size: 18px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* θダイヤル */
+.dial {
+  margin-top: 16px;
+}
+
+.dial label {
+  font-size: 12px;
+  opacity: 0.7;
+}
+
+.dial input[type='range'] {
+  width: 100%;
+  accent-color: currentColor;
+  margin-top: 6px;
+}
+
+#theta-label {
+  margin: 4px 0 0;
+  font-size: 12px;
+  opacity: 0.7;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 週次グラフ(popupと同じ棒) */
+#chart {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  min-height: 140px;
+}
+
+#chart .col {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+#chart .bar {
+  width: 100%;
+  height: 110px;
+  display: flex;
+  flex-direction: column-reverse;
+  border-radius: 6px 6px 0 0;
+  overflow: hidden;
+}
+
+#chart .unassisted {
+  background: currentColor;
+  opacity: 0.9;
+}
+
+#chart .assisted {
+  background: currentColor;
+  opacity: 0.3;
+}
+
+#chart .value,
+#chart .label {
+  font-size: 10.5px;
+  opacity: 0.6;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* 一覧(ライブラリ・クイズ) */
+.rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.rows li {
+  padding: 10px 12px;
+  border-radius: 10px;
+}
+
+.rows li.clickable {
+  cursor: pointer;
+}
+
+.rows li.clickable:hover {
+  background: color-mix(in srgb, currentColor 7%, transparent);
+}
+
+.row-title {
+  display: block;
+  font-size: 13.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.row-meta {
+  display: block;
+  font-size: 11.5px;
+  opacity: 0.6;
+  font-variant-numeric: tabular-nums;
+}
+
+.marks {
+  letter-spacing: 2px;
+}
+
+/* データ操作 */
+.actions button,
+.danger button {
+  font: inherit;
+  font-size: 13px;
+  padding: 8px 14px;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+}
+
+.danger {
+  margin-top: 20px;
+  padding: 14px;
+  border: 1px solid color-mix(in srgb, #d33 45%, transparent);
+  border-radius: 12px;
+}
+
+.danger button {
+  color: #d33;
+  border-color: currentColor;
+}

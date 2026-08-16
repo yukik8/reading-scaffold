@@ -163,6 +163,14 @@ export function getAllPages() {
   return run('pages', 'readonly', (s) => s.getAll()).then((rows) => rows ?? []);
 }
 
+export function getAllQuizzes() {
+  return run('quizzes', 'readonly', (s) => s.getAll()).then((rows) => rows ?? []);
+}
+
+export function getAllEvents() {
+  return run('events', 'readonly', (s) => s.getAll()).then((rows) => rows ?? []);
+}
+
 export function getAllQuizAttempts() {
   return run('quiz_attempts', 'readonly', (s) => s.getAll()).then((rows) => rows ?? []);
 }
