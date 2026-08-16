@@ -151,11 +151,6 @@ const CSS = `
     cursor: default;
     opacity: 0.75;
   }
-  .quiz .result {
-    margin-top: 10px;
-    font-size: 12px;
-    opacity: 0.85;
-  }
 
   /* 予告: 画面を斜めに走る金の光。この後に必ず本演出が来る(ニアミス禁止) */
   .foreshadow {
@@ -407,8 +402,9 @@ export function createOverlay() {
     },
 
     /**
-     * クイズカード。quiz = { question, choices[3], answer_index, comment }。
-     * 責めない原則: 不正解を罰しない・採点を残さない・無視したら黙って消える。
+     * クイズカード。quiz = { question, choices[3], answer_index }。
+     * 責めない: 不正解を罰しない・採点を残さない・無視したら黙って消える。
+     * 教えない: 正誤も解説も言葉にしない。正解の選択肢が光る+星だけ。
      */
     showQuiz(quiz, { onAnswer } = {}) {
       dismissHint(); // ヒントカードと同じ場所に出すので置き換える
@@ -444,18 +440,13 @@ export function createOverlay() {
           answered = true;
           const correct = i === quiz.answer_index;
           for (const btn of buttons) btn.disabled = true;
+          // 言葉の原則: 正誤を言葉で言わない・解説しない。
+          // 正解の選択肢が光る(事実)+ 星(雰囲気)だけで伝える
           buttons[quiz.answer_index].classList.add('correct');
-          const result = document.createElement('div');
-          result.className = 'result';
-          result.textContent = correct
-            ? `そのとおり。${quiz.comment ?? ''}`
-            : `正解は「${quiz.choices[quiz.answer_index]}」。${quiz.comment ?? ''}`;
-          el.append(result);
-          // 正解は星の雨、不正解でも参加への小さなきらめき(責めない)
           if (correct) shower(field, [36, 20]);
-          else burst(field, 8, { delaySpread: 0.6 });
+          else burst(field, 8, { delaySpread: 0.6 }); // 参加への小さなきらめき(責めない)
           onAnswer?.(correct);
-          setTimeout(removeCard, correct ? 4_000 : 6_000);
+          setTimeout(removeCard, correct ? 3_000 : 5_000);
         });
         el.append(b);
         return b;
@@ -471,15 +462,13 @@ export function createOverlay() {
       wrap.className = 'celebrate';
       const card = document.createElement('div');
       card.className = 'card';
+      // 言葉の原則: 労いも達成宣言も言葉にしない。リングと星と、事実(分数)だけ
       const ring = document.createElement('div');
       ring.className = 'big-ring';
       const text = document.createElement('div');
       text.className = 'text';
-      text.textContent = '読めた。';
-      const sub = document.createElement('div');
-      sub.className = 'sub';
-      sub.textContent = `今日の読書 ${readMin}分`;
-      card.append(ring, text, sub);
+      text.textContent = `${readMin}分`;
+      card.append(ring, text);
       wrap.append(card);
       shadow.append(wrap);
       requestAnimationFrame(() => wrap.classList.add('show'));

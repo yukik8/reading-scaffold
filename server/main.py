@@ -24,8 +24,8 @@ SYSTEM = """あなたは読書支援ツール「reading-scaffold」の出題エ�
 - 段落に書かれている内容のみから出題する(外部知識やこの先の内容を要求しない)
 - 読者を試すためではなく、理解を確かめて自信を持たせるための問題にする
 - 責めない: ひっかけ・重箱の隅・曖昧な選択肢を作らない
+- 教えない: 解説・教訓・褒め言葉は一切書かない。問題と選択肢だけで完結させる
 - 簡潔に: 問題文は60字以内、選択肢は各30字以内を目安にする
-- comment には段落の要点を1文だけ添える。優しく、教訓めかさない
 
 出力は指定のJSONスキーマに従う。answer_index は正解の添字(0-2)。"""
 
@@ -35,9 +35,8 @@ QUIZ_SCHEMA = {
         "question": {"type": "string"},
         "choices": {"type": "array", "items": {"type": "string"}},
         "answer_index": {"type": "integer"},
-        "comment": {"type": "string"},
     },
-    "required": ["question", "choices", "answer_index", "comment"],
+    "required": ["question", "choices", "answer_index"],
     "additionalProperties": False,
 }
 
