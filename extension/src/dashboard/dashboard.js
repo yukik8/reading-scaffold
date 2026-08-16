@@ -40,10 +40,7 @@ $('theta').addEventListener('input', () => {
 
 $('theta').addEventListener('change', async () => {
   const res = await send(Msg.SET_THETA, { theta: Number($('theta').value) });
-  if (res?.ok) {
-    $('theta-label').textContent = thetaText(res.theta);
-    $('theta-now').textContent = res.theta.toFixed(1);
-  }
+  if (res?.ok) $('theta-label').textContent = thetaText(res.theta);
 });
 
 // ---- 描画 -----------------------------------------------------------------
@@ -115,16 +112,22 @@ function drawQuizzes(items) {
       : q.question;
     const meta = document.createElement('span');
     meta.className = 'row-meta';
-    // 回答履歴は ○× の並び(事実)。未回答は「未回答」
-    const marks = q.attempts.length
-      ? q.attempts.map((a) => (a.correct ? '○' : '×')).join('')
-      : '未回答';
     const parts = [shortDate(q.created_at), q.page_title].filter(Boolean);
     meta.textContent = `${parts.join(' · ')} · `;
-    const markSpan = document.createElement('span');
-    markSpan.className = 'marks';
-    markSpan.textContent = marks;
-    meta.append(markSpan);
+    // 回答履歴は ○× の並び(事実)。○=金、×=薄墨(責めない)
+    const marks = document.createElement('span');
+    marks.className = 'mk';
+    if (q.attempts.length === 0) {
+      marks.textContent = '未回答';
+    } else {
+      for (const a of q.attempts) {
+        const m = document.createElement('span');
+        m.className = a.correct ? 'mk-o' : 'mk-x';
+        m.textContent = a.correct ? '○' : '×';
+        marks.append(m);
+      }
+    }
+    meta.append(marks);
     li.append(title, meta);
     list.append(li);
   }
@@ -145,9 +148,11 @@ function drawTotals(t) {
     const div = document.createElement('div');
     const dt = document.createElement('dt');
     dt.textContent = k;
+    const leader = document.createElement('span');
+    leader.className = 'leader';
     const dd = document.createElement('dd');
     dd.textContent = v;
-    div.append(dt, dd);
+    div.append(dt, leader, dd);
     dl.append(div);
   }
 }
@@ -192,11 +197,33 @@ $('wipe').addEventListener('click', async () => {
 
 // ---- 初期描画 -------------------------------------------------------------
 
+function drawWeekLine(week) {
+  const line = $('week-line');
+  line.textContent = '';
+  const add = (text, strong = false) => {
+    if (strong) {
+      const b = document.createElement('b');
+      b.textContent = text;
+      line.append(b);
+    } else {
+      line.append(document.createTextNode(text));
+    }
+  };
+  add('今週 ');
+  add(`${week.read_min}分`, true);
+  add(' · ');
+  add(`${week.sessions}`, true);
+  add('セッション');
+  if (week.escape_rate !== null) {
+    add(' · 離脱率 ');
+    add(`${Math.round(week.escape_rate * 100)}%`, true);
+  }
+}
+
 async function render() {
   $('ver').textContent = `v${chrome.runtime.getManifest?.().version ?? '?'}`;
 
   const state = await getState();
-  $('theta-now').textContent = state.theta.toFixed(1);
   $('theta').value = String(state.theta);
   $('theta-label').textContent = thetaText(state.theta);
 
@@ -205,12 +232,7 @@ async function render() {
   $('chart-empty').hidden = hasData;
   $('chart').hidden = !hasData;
   if (hasData) drawChart(mirror.weeks);
-  $('week-min').textContent = `${mirror.this_week.read_min}分`;
-  $('week-sessions').textContent = String(mirror.this_week.sessions);
-  $('week-escape').textContent =
-    mirror.this_week.escape_rate === null
-      ? '—'
-      : `${Math.round(mirror.this_week.escape_rate * 100)}%`;
+  drawWeekLine(mirror.this_week);
 
   const library = await buildLibrary(200);
   $('library-empty').hidden = library.length > 0;

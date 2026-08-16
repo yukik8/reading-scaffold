@@ -1,7 +1,14 @@
-/* 簡素=熟練。装飾は署名要素(細いリング)だけに寄せる。 */
+/* 簡素=熟練。装飾は署名要素(細いリング)と金(報酬色)だけに寄せる。 */
 :root {
   color-scheme: light dark;
   font-family: system-ui, -apple-system, "Hiragino Sans", sans-serif;
+  --gold: #a87718;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --gold: #d9a441;
+  }
 }
 
 body {
@@ -74,12 +81,12 @@ h2 {
 }
 
 .bar .unassisted {
-  background: currentColor;
+  background: var(--gold); /* 補助なし読書時間=この製品が金で塗る唯一の数字 */
   border-radius: 2px 2px 0 0;
 }
 
 .bar .assisted {
-  background: color-mix(in srgb, currentColor 30%, transparent);
+  background: color-mix(in srgb, currentColor 22%, transparent);
   border-radius: 2px 2px 0 0;
 }
 

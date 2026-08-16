@@ -1,117 +1,211 @@
-/* 簡素=熟練。popupと同じ文法(リング・tabular-nums・抑制の美学)をフルページで。 */
+/* 夜の書斎。墨の紙に、製品の報酬色である金だけを差す。
+   見出しと書名は明朝(本の書体)、UIと数字はゴシック。
+   シグネチャは帯: θのスライダーを帯として描き、つまみは署名のリング。 */
+
 :root {
-  color-scheme: light dark;
-  font-family: system-ui, -apple-system, 'Hiragino Sans', sans-serif;
+  --bg: #171310;
+  --ink: #eae3d6;
+  --muted: rgba(234, 227, 214, 0.55);
+  --faint: rgba(234, 227, 214, 0.12);
+  --gold: #d9a441;
+  --gold-bright: #e9bb63;
+  --danger: #c0574a;
+  color-scheme: dark;
+  font-family: 'Hiragino Sans', 'Yu Gothic', system-ui, sans-serif;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #f6f1e7;
+    --ink: #272219;
+    --muted: rgba(39, 34, 25, 0.58);
+    --faint: rgba(39, 34, 25, 0.14);
+    --gold: #a87718;
+    --gold-bright: #8f650f;
+    --danger: #a8402f;
+    color-scheme: light;
+  }
 }
 
 body {
   margin: 0;
+  background: var(--bg);
+  color: var(--ink);
   font-size: 14px;
-  line-height: 1.6;
+  line-height: 1.7;
 }
 
 main {
-  max-width: 680px;
+  max-width: 640px;
   margin: 0 auto;
-  padding: 32px 20px 64px;
+  padding: 48px 24px 96px;
   display: grid;
-  gap: 32px;
+  gap: 56px;
 }
+
+/* 入場: そっと浮かび上がる(動きを減らす設定を尊重) */
+@media (prefers-reduced-motion: no-preference) {
+  main > * {
+    animation: rise 0.55s ease both;
+  }
+  main > :nth-child(2) { animation-delay: 0.06s; }
+  main > :nth-child(3) { animation-delay: 0.12s; }
+  main > :nth-child(4) { animation-delay: 0.18s; }
+  main > :nth-child(5) { animation-delay: 0.24s; }
+  main > :nth-child(6) { animation-delay: 0.3s; }
+  main > :nth-child(7) { animation-delay: 0.36s; }
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+}
+
+/* ---- ヘッダ ---- */
 
 header {
   display: flex;
-  align-items: center;
+  align-items: baseline;
   gap: 10px;
-}
-
-h1 {
-  margin: 0;
-  font-size: 16px;
-  font-weight: 600;
-}
-
-.ver {
-  font-size: 12px;
-  opacity: 0.5;
-  font-variant-numeric: tabular-nums;
 }
 
 .ring {
   flex: none;
-  width: 16px;
-  height: 16px;
-  border: 1.5px solid currentColor;
+  width: 14px;
+  height: 14px;
+  border: 1.5px solid var(--gold);
   border-radius: 50%;
-  opacity: 0.7;
+  align-self: center;
 }
 
-h2 {
-  margin: 0 0 12px;
-  font-size: 13px;
-  font-weight: 600;
-  opacity: 0.7;
+h1 {
+  margin: 0;
+  font-family: 'Hiragino Mincho ProN', 'Yu Mincho', 'Noto Serif JP', serif;
+  font-size: 16px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+}
+
+.ver {
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- 見出し(小さく・間を張る) ---- */
+
+.eyebrow {
+  display: block;
+  font-size: 10.5px;
+  letter-spacing: 0.22em;
+  color: var(--muted);
+  margin-bottom: 14px;
+}
+
+.eyebrow::before {
+  content: '';
+  display: inline-block;
+  width: 14px;
+  height: 1px;
+  background: var(--gold);
+  margin-right: 10px;
+  vertical-align: middle;
 }
 
 .note {
   font-size: 12px;
-  opacity: 0.6;
+  color: var(--muted);
   margin: 4px 0;
 }
 
-/* 統計 */
-.stats {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-  gap: 8px 16px;
-  margin: 0;
+/* ---- 帯(シグネチャ) ---- */
+
+.obi-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
 }
 
-.stats div {
-  padding: 10px 12px;
-  border: 1px solid color-mix(in srgb, currentColor 12%, transparent);
-  border-radius: 10px;
-}
-
-.stats dt {
-  font-size: 11px;
-  opacity: 0.6;
-}
-
-.stats dd {
-  margin: 2px 0 0;
-  font-size: 18px;
+.theta-read {
+  font-size: 13px;
+  color: var(--muted);
   font-variant-numeric: tabular-nums;
 }
 
-/* θダイヤル */
-.dial {
-  margin-top: 16px;
-}
-
-.dial label {
-  font-size: 12px;
-  opacity: 0.7;
-}
-
-.dial input[type='range'] {
+#theta {
+  -webkit-appearance: none;
+  appearance: none;
   width: 100%;
-  accent-color: currentColor;
-  margin-top: 6px;
+  height: 24px;
+  margin: 10px 0 0;
+  background: none;
+  cursor: pointer;
 }
 
-#theta-label {
-  margin: 4px 0 0;
-  font-size: 12px;
-  opacity: 0.7;
+/* 帯本体: 右(8)ほど金が濃く、左端(0)=卒業へ向かって薄れていく */
+#theta::-webkit-slider-runnable-track {
+  height: 3px;
+  border-radius: 2px;
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--gold) 10%, transparent),
+    color-mix(in srgb, var(--gold) 70%, transparent)
+  );
+}
+
+/* つまみ=リング */
+#theta::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 16px;
+  height: 16px;
+  margin-top: -6.5px;
+  border-radius: 50%;
+  border: 1.5px solid var(--gold-bright);
+  background: var(--bg);
+  box-shadow: 0 0 0 3px var(--bg);
+}
+
+#theta:focus-visible {
+  outline: none;
+}
+
+#theta:focus-visible::-webkit-slider-thumb {
+  box-shadow:
+    0 0 0 3px var(--bg),
+    0 0 0 5px color-mix(in srgb, var(--gold) 55%, transparent);
+}
+
+.obi-ends {
+  display: flex;
+  justify-content: space-between;
+  font-size: 10.5px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  margin-top: 2px;
+}
+
+.week-line {
+  margin: 22px 0 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.week-line b {
+  font-weight: 600;
+  font-size: 15px;
+  color: var(--ink);
   font-variant-numeric: tabular-nums;
 }
 
-/* 週次グラフ(popupと同じ棒) */
+/* ---- 週次グラフ: 補助なし=金、補助あり=薄墨 ---- */
+
 #chart {
   display: flex;
   align-items: flex-end;
-  gap: 6px;
-  min-height: 140px;
+  gap: 8px;
+  min-height: 150px;
 }
 
 #chart .col {
@@ -119,99 +213,166 @@ h2 {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
   min-width: 0;
 }
 
 #chart .bar {
   width: 100%;
-  height: 110px;
+  height: 112px;
   display: flex;
   flex-direction: column-reverse;
-  border-radius: 6px 6px 0 0;
+  border-radius: 3px 3px 0 0;
   overflow: hidden;
 }
 
 #chart .unassisted {
-  background: currentColor;
-  opacity: 0.9;
+  background: var(--gold);
 }
 
 #chart .assisted {
-  background: currentColor;
-  opacity: 0.3;
+  background: var(--faint);
 }
 
 #chart .value,
 #chart .label {
   font-size: 10.5px;
-  opacity: 0.6;
+  color: var(--muted);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
 
-/* 一覧(ライブラリ・クイズ) */
+#chart .value {
+  color: var(--gold);
+}
+
+/* ---- 一覧(書架・クイズ): 書名は明朝 ---- */
+
 .rows {
   list-style: none;
   margin: 0;
   padding: 0;
-  display: grid;
-  gap: 2px;
 }
 
 .rows li {
-  padding: 10px 12px;
-  border-radius: 10px;
+  padding: 12px 2px;
+  border-top: 1px solid var(--faint);
+}
+
+.rows li:first-child {
+  border-top: none;
+  padding-top: 2px;
 }
 
 .rows li.clickable {
   cursor: pointer;
 }
 
-.rows li.clickable:hover {
-  background: color-mix(in srgb, currentColor 7%, transparent);
+.rows li.clickable:hover .row-title {
+  color: var(--gold-bright);
 }
 
 .row-title {
   display: block;
-  font-size: 13.5px;
+  font-family: 'Hiragino Mincho ProN', 'Yu Mincho', 'Noto Serif JP', serif;
+  font-size: 14.5px;
+  line-height: 1.5;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  transition: color 0.15s ease;
 }
 
 .row-meta {
   display: block;
   font-size: 11.5px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  margin-top: 2px;
+}
+
+/* 回答履歴: ○=金、×=薄墨(責めない) */
+.mk {
+  letter-spacing: 3px;
+}
+
+.mk-o {
+  color: var(--gold);
+}
+
+.mk-x {
+  color: var(--muted);
   opacity: 0.6;
+}
+
+/* ---- 累計: 目次のドットリーダー ---- */
+
+.ledger {
+  margin: 0;
+  display: grid;
+  gap: 8px;
+  max-width: 380px;
+}
+
+.ledger > div {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.ledger dt {
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
+.ledger .leader {
+  flex: 1;
+  border-bottom: 1px dotted color-mix(in srgb, var(--ink) 30%, transparent);
+  transform: translateY(-3px);
+}
+
+.ledger dd {
+  margin: 0;
+  font-size: 14px;
   font-variant-numeric: tabular-nums;
 }
 
-.marks {
-  letter-spacing: 2px;
-}
+/* ---- データ管理 ---- */
 
-/* データ操作 */
 .actions button,
 .danger button {
   font: inherit;
-  font-size: 13px;
-  padding: 8px 14px;
-  border: 1px solid currentColor;
+  font-size: 12.5px;
+  padding: 7px 16px;
+  border: 1px solid var(--faint);
   border-radius: 999px;
   background: none;
-  color: inherit;
+  color: var(--ink);
   cursor: pointer;
+  transition: border-color 0.15s ease, color 0.15s ease;
+}
+
+.actions button:hover {
+  border-color: var(--gold);
+  color: var(--gold-bright);
 }
 
 .danger {
-  margin-top: 20px;
-  padding: 14px;
-  border: 1px solid color-mix(in srgb, #d33 45%, transparent);
-  border-radius: 12px;
+  margin-top: 28px;
+  padding-top: 18px;
+  border-top: 1px solid var(--faint);
+}
+
+.danger-note {
+  font-size: 11px;
+  color: var(--muted);
+  margin: 0 0 10px;
 }
 
 .danger button {
-  color: #d33;
-  border-color: currentColor;
+  color: var(--danger);
+}
+
+.danger button:hover {
+  border-color: var(--danger);
 }

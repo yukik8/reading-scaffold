@@ -8,52 +8,47 @@
   <body>
     <main>
       <header>
-        <span class="ring"></span>
+        <span class="ring" aria-hidden="true"></span>
         <h1>reading-scaffold</h1>
         <span id="ver" class="ver"></span>
       </header>
 
-      <!-- いま: θと今週。事実のみ(目標・比較・警告なし) -->
-      <section aria-label="いま">
-        <h2>いま</h2>
-        <dl class="stats" id="now-stats">
-          <div><dt>補助量 θ</dt><dd id="theta-now">—</dd></div>
-          <div><dt>今週の読書</dt><dd id="week-min">—</dd></div>
-          <div><dt>今週のセッション</dt><dd id="week-sessions">—</dd></div>
-          <div><dt>今週の離脱率</dt><dd id="week-escape">—</dd></div>
-        </dl>
-        <div class="dial">
-          <label for="theta">補助の量(手動・後で自動漸減)</label>
-          <input id="theta" type="range" min="0" max="8" step="0.1" value="8" />
-          <p id="theta-label">—</p>
+      <!-- 帯: θの現在地。つまみ=署名のリング。左端(0)に着いたら卒業 -->
+      <section class="obi-sec" aria-label="補助の量">
+        <div class="obi-head">
+          <span class="eyebrow">補助の量</span>
+          <span id="theta-label" class="theta-read">—</span>
         </div>
+        <input id="theta" type="range" min="0" max="8" step="0.1" value="8" aria-label="補助量θ" />
+        <div class="obi-ends" aria-hidden="true"><span>0</span><span>8</span></div>
+        <p id="week-line" class="week-line"></p>
       </section>
 
       <section aria-label="週次推移">
-        <h2>補助なし読書時間(週)</h2>
+        <span class="eyebrow">補助なし読書時間・週</span>
         <div id="chart"></div>
         <p id="chart-empty" class="note" hidden>まだ記録がありません。</p>
       </section>
 
-      <section aria-label="ライブラリ">
-        <h2>ライブラリ</h2>
+      <section aria-label="書架">
+        <span class="eyebrow">書架</span>
         <ul id="library" class="rows"></ul>
         <p id="library-empty" class="note" hidden>まだ読んだものがありません。</p>
       </section>
 
       <section aria-label="クイズ">
-        <h2>クイズ</h2>
+        <span class="eyebrow">クイズ</span>
         <ul id="quizzes" class="rows"></ul>
         <p id="quizzes-empty" class="note" hidden>まだクイズは出ていません。</p>
       </section>
 
       <section aria-label="累計">
-        <h2>累計</h2>
-        <dl class="stats" id="totals"></dl>
+        <span class="eyebrow">累計</span>
+        <dl id="totals" class="ledger"></dl>
       </section>
 
       <section aria-label="データ">
-        <h2>データ</h2>
+        <span class="eyebrow">データ</span>
         <p class="note">
           すべてこの端末のブラウザ内に保存されています。読んだページ・クイズ・生ログが
           サーバへ送られることはありません。
@@ -62,7 +57,7 @@
           <button id="export" type="button">JSONでエクスポート</button>
         </div>
         <div class="danger">
-          <p class="note">元に戻せない操作</p>
+          <p class="danger-note">元に戻せない操作</p>
           <button id="wipe" type="button">データを全部消す</button>
         </div>
       </section>
