@@ -45,6 +45,32 @@
         <p id="growth-empty" class="note" hidden>まだ推移はありません。</p>
       </section>
 
+      <!-- 週次目標: 達成率(棒)×θ(金の線)の二軸。達成率を保ったままθが下がることが
+           回復の証拠(docs/research/benchmark.md §5)。目標は本人が選ぶ・制御器は読まない・
+           未達を警告しない(事実の表示のみ) -->
+      <section aria-label="週次目標">
+        <div class="obi-head">
+          <span class="eyebrow">週次目標</span>
+          <select id="goal" aria-label="週次目標の選択"></select>
+        </div>
+        <div id="kpi-wrap" class="growth-wrap">
+          <div class="growth-y" aria-hidden="true">
+            <span>100%</span><span>50%</span><span>0%</span>
+          </div>
+          <div class="growth-main">
+            <svg id="kpi" viewBox="0 0 600 160" preserveAspectRatio="none" role="img"
+                 aria-label="週次目標の達成率と補助量θの推移"></svg>
+            <div id="kpi-x" class="growth-x" aria-hidden="true"></div>
+          </div>
+          <div class="growth-y kpi-y-right" aria-hidden="true">
+            <span>θ8</span><span>4</span><span>0</span>
+          </div>
+        </div>
+        <p id="kpi-empty" class="note" hidden>まだ記録がありません。</p>
+        <p id="kpi-line" class="week-line"></p>
+        <p class="note">棒は目標に対する達成率、金の線は補助量θ。目標は補助の量に影響しません。</p>
+      </section>
+
       <section aria-label="週次推移">
         <span class="eyebrow">補助なし読書時間・週</span>
         <div id="chart"></div>

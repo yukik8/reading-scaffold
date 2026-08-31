@@ -4,7 +4,7 @@
 // セッションが無いときは何も読まず何も書かずに戻る — 「計測はセッション中のみ」。
 
 import { Msg } from '../shared/events.js';
-import { QUIZ } from '../shared/config.js';
+import { QUIZ, GOALS } from '../shared/config.js';
 import {
   startSession,
   endSession,
@@ -20,7 +20,7 @@ import {
 } from './session.js';
 import { buildMirror } from './mirror.js';
 import { buildLibrary } from './library.js';
-import { wipeAll, getState, sha256Hex, getQuizByHash, addQuiz } from './store.js';
+import { wipeAll, getState, putState, sha256Hex, getQuizByHash, addQuiz } from './store.js';
 import { getCurrent as getCurrentSession } from './session.js';
 
 chrome.tabs.onActivated.addListener((activeInfo) => {
@@ -72,6 +72,17 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       case Msg.SET_THETA:
         sendResponse({ ok: true, ...(await setTheta(msg.theta)) });
         break;
+
+      case Msg.SET_GOAL: {
+        // 週次目標(評価レイヤー)。stateへの書き込みはSW経由に揃える(制御器との競合回避)。
+        // 制御器はgoalを読まないので、θの力学には一切影響しない。
+        const goal = typeof msg.goal === 'string' && msg.goal in GOALS ? msg.goal : null;
+        const state = await getState();
+        state.goal = goal;
+        await putState(state);
+        sendResponse({ ok: true, goal });
+        break;
+      }
 
       case Msg.GET_MIRROR:
         sendResponse({ ok: true, mirror: await buildMirror() });

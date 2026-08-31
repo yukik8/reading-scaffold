@@ -3,9 +3,10 @@
 // θ変更と全消去だけはSW経由(進行中セッションへの反映・後片付けがSWの仕事なので)。
 
 import { Msg } from '../shared/events.js';
-import { THETA_MAX, DEMO } from '../shared/config.js';
+import { THETA_MAX, DEMO, GOALS } from '../shared/config.js';
 import { seedDemoData } from './demo-seed.js';
 import { buildMirror } from '../background/mirror.js';
+import { buildKpi } from '../background/kpi.js';
 import { buildLibrary, buildQuizLog, buildTotals, buildThetaHistory } from '../background/library.js';
 import {
   getState,
@@ -71,6 +72,127 @@ $('theta').addEventListener('change', async () => {
   const res = await send(Msg.SET_THETA, { theta: Number($('theta').value) });
   if (res?.ok) renderTheta(res.theta);
 });
+
+// ---- 週次目標(達成率×θ) ---------------------------------------------------
+
+// 目標セレクタ。選択は評価レイヤーだけを変える(θの力学には影響しない)。
+for (const [key, g] of Object.entries(GOALS)) {
+  const opt = document.createElement('option');
+  opt.value = key;
+  opt.textContent = `${g.name} — ${g.desc}`;
+  $('goal').append(opt);
+}
+
+$('goal').addEventListener('change', async () => {
+  await send(Msg.SET_GOAL, { goal: $('goal').value });
+  drawKpi(await buildKpi());
+});
+
+/**
+ * 達成率(棒・左軸0〜100%)とθ(金の線・右軸8〜0)の二軸グラフ。
+ * 「棒が高いままで線が下がる」= 補助に依存せず読めている、が読み取りたい形。
+ * 責めない: 未達の棒も色を変えない・警告を出さない。
+ */
+function drawKpi(kpi) {
+  $('goal').value = kpi.goalKey;
+
+  const hasData = kpi.weeks.some((w) => w.sessions > 0);
+  $('kpi-empty').hidden = hasData;
+  $('kpi-wrap').hidden = !hasData;
+  $('kpi-line').hidden = !hasData;
+  if (!hasData) return;
+
+  const svg = $('kpi');
+  svg.textContent = '';
+  const ns = 'http://www.w3.org/2000/svg';
+  const W = 600;
+  const padX = 10;
+  const top = 14;
+  const bottom = 146;
+  const n = kpi.weeks.length;
+  const slot = (W - padX * 2) / n;
+
+  for (const gy of [top, (top + bottom) / 2, bottom]) {
+    const line = document.createElementNS(ns, 'line');
+    line.setAttribute('x1', padX);
+    line.setAttribute('x2', W - padX);
+    line.setAttribute('y1', gy);
+    line.setAttribute('y2', gy);
+    line.setAttribute('class', 'growth-grid');
+    svg.append(line);
+  }
+
+  // 達成率の棒
+  kpi.weeks.forEach((w, i) => {
+    if (w.sessions === 0) return;
+    const h = w.achievement * (bottom - top);
+    const rect = document.createElementNS(ns, 'rect');
+    rect.setAttribute('x', padX + i * slot + slot * 0.18);
+    rect.setAttribute('width', slot * 0.64);
+    rect.setAttribute('y', bottom - h);
+    rect.setAttribute('height', Math.max(h, w.achievement > 0 ? 2 : 0));
+    rect.setAttribute('class', w.achievement >= 1 ? 'kpi-bar kpi-bar-full' : 'kpi-bar');
+    svg.append(rect);
+  });
+
+  // θの線(データのある週だけ結ぶ)。右軸はθ8が上・0が下 — 卒業に向かって線が沈む
+  const pts = kpi.weeks
+    .map((w, i) => ({ w, i }))
+    .filter(({ w }) => w.theta_avg !== null)
+    .map(({ w, i }) => ({
+      x: padX + i * slot + slot / 2,
+      y: top + (1 - w.theta_avg / THETA_MAX) * (bottom - top),
+    }));
+  if (pts.length >= 2) {
+    const poly = document.createElementNS(ns, 'polyline');
+    poly.setAttribute('points', pts.map((p) => `${p.x},${p.y}`).join(' '));
+    poly.setAttribute('class', 'growth-line');
+    svg.append(poly);
+  }
+  for (const p of pts) {
+    const dot = document.createElementNS(ns, 'circle');
+    dot.setAttribute('cx', p.x);
+    dot.setAttribute('cy', p.y);
+    dot.setAttribute('r', 3);
+    dot.setAttribute('class', 'growth-dot');
+    svg.append(dot);
+  }
+
+  const xAxis = $('kpi-x');
+  xAxis.textContent = '';
+  for (const w of kpi.weeks) {
+    const span = document.createElement('span');
+    span.textContent = w.label;
+    xAxis.append(span);
+  }
+
+  // 今週の事実(警告なし・比較は自分の全期間のみ)
+  const thisWeek = kpi.weeks[kpi.weeks.length - 1];
+  const line = $('kpi-line');
+  line.textContent = '';
+  const add = (text, strong = false) => {
+    if (strong) {
+      const b = document.createElement('b');
+      b.textContent = text;
+      line.append(b);
+    } else {
+      line.append(document.createTextNode(text));
+    }
+  };
+  add('今週 成功 ');
+  add(`${thisWeek.success_count}回`, true);
+  add(' · 連続の中央値 ');
+  add(`${thisWeek.streak_median_min}分`, true);
+  add(' · 補助なし ');
+  add(`${thisWeek.unassisted_min}分`, true);
+  if (kpi.quiz.week.total > 0) {
+    add(' · クイズ ');
+    add(`${kpi.quiz.week.correct}/${kpi.quiz.week.total}`, true);
+    if (kpi.quiz.all.total > 0) {
+      add(`(全期間 ${Math.round((kpi.quiz.all.correct / kpi.quiz.all.total) * 100)}%)`);
+    }
+  }
+}
 
 // ---- 描画 -----------------------------------------------------------------
 
@@ -319,6 +441,7 @@ async function render() {
   const state = await getState();
   renderTheta(state.theta);
   drawGrowth(await buildThetaHistory());
+  drawKpi(await buildKpi());
 
   const mirror = await buildMirror();
   const hasData = mirror.total_sessions > 0;

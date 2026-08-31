@@ -94,6 +94,10 @@ export async function startSession(tabId) {
     completion_pct: 0,
     hints_shown: 0,
     effects_shown: 0,
+    // 連続読書ストリーク(評価レイヤー用)。鼓動が途切れず・離脱しない間を一続きと数える
+    longest_streak_ms: 0,
+    cur_streak_ms: 0,
+    last_dwell_at: null,
   };
   await setCurrent(session);
   await appendEvent(session.session_id, EventType.SESSION_START, {
@@ -183,6 +187,8 @@ export async function endSession(reason) {
     // 補助なし判定に使う。
     hints_shown: session.hints_shown,
     effects_shown: session.effects_shown,
+    // 最長連続読書(評価レイヤー用)
+    longest_streak_ms: session.longest_streak_ms ?? 0,
   });
 
   // 記録層: pagesへ累計を積む
@@ -291,6 +297,13 @@ export async function onReport(event, payload, sender) {
       // 読書時間の操作的定義に合致した鼓動だけがread_msに積まれる。
       if (session.state === SessionState.ACTIVE) {
         session.read_ms += SESSION.dwellTickMs;
+        const contiguous =
+          session.last_dwell_at != null && now - session.last_dwell_at <= SESSION.dwellTickMs * 2;
+        session.cur_streak_ms = contiguous
+          ? (session.cur_streak_ms ?? 0) + SESSION.dwellTickMs
+          : SESSION.dwellTickMs;
+        session.last_dwell_at = now;
+        session.longest_streak_ms = Math.max(session.longest_streak_ms ?? 0, session.cur_streak_ms);
         await appendEvent(session.session_id, EventType.DWELL_TICK, {
           visible_paragraph_range: payload.visible_paragraph_range ?? null,
         });
@@ -464,6 +477,7 @@ async function escape(session, toDomain) {
   session.escaped_at = Date.now();
   session.last_event_at = session.escaped_at;
   session.escapes += 1;
+  session.cur_streak_ms = 0; // 離脱で連続は途切れる
   await appendEvent(session.session_id, EventType.TAB_ESCAPE, { to_domain: toDomain });
   await setCurrent(session);
 }

@@ -98,6 +98,8 @@ export async function seedDemoData() {
       const tb = thetaByDay[DAYS - 1 - d];
       const hints = tb > 1.5 ? Math.max(0, Math.round(tb * (0.6 + rand() * 0.5))) : 0;
       const escapes = rand() < (0.45 - progress * 0.35) ? 1 : 0;
+      // 連続読書は離脱の有無と成長度に応じて伸びる(週次目標グラフの素材)
+      const streakRatio = escapes ? 0.35 + rand() * 0.25 : 0.55 + progress * 0.35;
       n += 1;
       await putSession({
         session_id: `demo-pro-s${n}`,
@@ -113,6 +115,7 @@ export async function seedDemoData() {
         success: readMin >= 5 && escapes <= 1,
         hints_shown: hints,
         effects_shown: hints > 0 && rand() < 0.3 ? 1 : 0,
+        longest_streak_ms: Math.round(readMin * 60_000 * Math.min(streakRatio, 1)),
       });
     }
   }
@@ -141,7 +144,7 @@ export async function seedDemoData() {
     }
   }
 
-  // 制御状態: 茶帯(自立度91%)
+  // 制御状態: 茶帯(自立度91%)。玄人なので週次目標も最終段階
   await putState({
     theta: 0.7,
     success_streak: 4,
@@ -149,5 +152,6 @@ export async function seedDemoData() {
     day: null,
     day_start_theta: 0.7,
     diag_answers: null,
+    goal: 'level3',
   });
 }

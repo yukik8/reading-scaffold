@@ -119,6 +119,7 @@ const DEFAULT_STATE = {
   day: null, // 1日の総変化上限の判定用
   day_start_theta: null,
   diag_answers: null,
+  goal: null, // 週次目標のキー(GOALS)。評価レイヤー専用 — 制御器は読まない
   updated_at: null,
 };
 

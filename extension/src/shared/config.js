@@ -105,6 +105,18 @@ export const SUCCESS = {
   maxEscapes: 1,
 };
 
+// 週次目標(評価レイヤーのKPI)。ユーザーが自分で選ぶ。段階が上がると評価だけが厳しくなる。
+// 制御器はこれを一切読まない(目標を制御に入れない — 不変条件)。SUCCESSの定義も動かさない。
+// 達成率はダッシュボードにのみ事実として表示する(popupのMirrorには出さない — 責めない原則)。
+// 閾値の根拠: docs/research/benchmark.md §3・§5(レベル2の10分はGloria Markの
+// 「中断までのプロジェクト集中≈10.5分」、レベル3の週60分はATUSのintensive reader相当)。
+export const GOALS = {
+  level1: { name: 'まず読める', desc: '成功セッション 週3回', sessions: 3 },
+  level2: { name: '続けて読める', desc: '成功セッション 週5回・10分続けて', sessions: 5, streakMin: 10 },
+  level3: { name: '自分の力で読める', desc: '補助なしで 週60分', unassistedMin: 60 },
+};
+export const DEFAULT_GOAL = 'level1';
+
 export const MIRROR = {
   // 週次グラフに出す週数。
   weeks: 8,
