@@ -63,7 +63,18 @@ export async function startSession(tabId) {
 
   const tab = await chrome.tabs.get(tabId);
   const domain = domainOf(tab.url);
-  if (!domain) throw new Error('このページでは計測できません');
+  // http/https以外(chrome:// や拡張ページ等)は注入できない。生のChromeエラー
+  // (Cannot access a chrome-extension:// URL...)を出す前に、ここで止める。
+  const protocol = (() => {
+    try {
+      return new URL(tab.url).protocol;
+    } catch {
+      return null;
+    }
+  })();
+  if (!domain || (protocol !== 'http:' && protocol !== 'https:')) {
+    throw new Error('このページでは計測できません(通常のWebページで押してください)');
+  }
 
   const state = await getState();
   const now = Date.now();
