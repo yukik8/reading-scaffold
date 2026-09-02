@@ -7,6 +7,12 @@
   </head>
   <body>
     <main>
+      <!-- 初回のみ: 診断+目標選択が済むまでは、はじめの設定へ誘導する -->
+      <div id="onboard" hidden>
+        <p id="onboard-note">はじめに、いまの読書に合わせた設定をします(1分)。</p>
+        <button id="open-onboarding" type="button">はじめる</button>
+      </div>
+
       <div id="controls">
         <button id="start" type="button">読む</button>
         <button id="end" type="button" hidden>終える</button>

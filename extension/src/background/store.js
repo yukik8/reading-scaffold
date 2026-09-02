@@ -120,6 +120,7 @@ const DEFAULT_STATE = {
   day_start_theta: null,
   diag_answers: null,
   goal: null, // 週次目標のキー(GOALS)。評価レイヤー専用 — 制御器は読まない
+  onboarded_at: null, // 初回診断+目標選択の完了時刻。nullの間はpopupがオンボーディングへ誘導
   updated_at: null,
 };
 

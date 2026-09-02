@@ -32,6 +32,11 @@ $('open-dashboard').addEventListener('click', () => {
   chrome.tabs.create({ url: chrome.runtime.getURL('src/dashboard/dashboard.html') });
 });
 
+$('open-onboarding').addEventListener('click', () => {
+  chrome.tabs.create({ url: chrome.runtime.getURL('src/onboarding/onboarding.html') });
+  window.close();
+});
+
 function drawChart(weeks) {
   const chart = $('chart');
   chart.textContent = '';
@@ -97,6 +102,17 @@ function drawLibrary(items) {
 
 async function render() {
   const status = await send(Msg.GET_STATUS);
+
+  // 診断+目標選択が済んでいなければ、通常UIの代わりに設定への誘導だけを出す。
+  // (進行中セッションがある場合は例外 — 終了ボタンを奪わない)
+  const onboarded = Boolean(status?.state?.onboarded_at);
+  if (!onboarded && !status?.session) {
+    $('onboard').hidden = false;
+    $('controls').hidden = true;
+    $('mirror').hidden = true;
+    return;
+  }
+
   const session = status?.session ?? null;
   $('start').hidden = Boolean(session);
   $('end').hidden = !session;

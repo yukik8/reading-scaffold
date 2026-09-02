@@ -117,6 +117,19 @@ export const GOALS = {
 };
 export const DEFAULT_GOAL = 'level1';
 
+// 初回診断(オンボーディング)。4問×0〜2点の合計(0=軽い〜8=重い)を初期θに写す。
+// スコア・θを本人に見せない(「中毒度」のラベリングをしない — PRD「診断と目標設定」)。
+// 診断は内部でθの初期値としてだけ働き、以後のθは制御器だけが動かす。
+export const DIAGNOSIS = {
+  thetaByScore: [2, 3, 4, 5, 5.5, 6, 7, 7.5, 8],
+  /** 目標のおすすめ。重いほど控えめな段階から(自己設定なので最終決定は本人)。 */
+  recommendGoal(score) {
+    if (score >= 5) return 'level1';
+    if (score >= 2) return 'level2';
+    return 'level3';
+  },
+};
+
 export const MIRROR = {
   // 週次グラフに出す週数。
   weeks: 8,

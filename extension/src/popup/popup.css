@@ -39,6 +39,18 @@ main > * {
   gap: 8px;
 }
 
+/* 初回の誘導(診断+目標選択が済むまで) */
+#onboard {
+  display: grid;
+  gap: 10px;
+}
+
+#onboard-note {
+  margin: 0;
+  font-size: 12.5px;
+  opacity: 0.75;
+}
+
 button {
   font: inherit;
   padding: 8px 12px;

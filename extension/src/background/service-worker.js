@@ -4,7 +4,7 @@
 // セッションが無いときは何も読まず何も書かずに戻る — 「計測はセッション中のみ」。
 
 import { Msg } from '../shared/events.js';
-import { QUIZ, GOALS } from '../shared/config.js';
+import { QUIZ, GOALS, DIAGNOSIS } from '../shared/config.js';
 import {
   startSession,
   endSession,
@@ -20,8 +20,23 @@ import {
 } from './session.js';
 import { buildMirror } from './mirror.js';
 import { buildLibrary } from './library.js';
-import { wipeAll, getState, putState, sha256Hex, getQuizByHash, addQuiz } from './store.js';
+import {
+  wipeAll,
+  getState,
+  putState,
+  getAllSessions,
+  sha256Hex,
+  getQuizByHash,
+  addQuiz,
+} from './store.js';
 import { getCurrent as getCurrentSession } from './session.js';
+
+// 新規インストール時だけオンボーディング(診断+目標選択)を開く。更新では開かない。
+chrome.runtime.onInstalled.addListener((details) => {
+  if (details.reason === 'install') {
+    chrome.tabs.create({ url: chrome.runtime.getURL('src/onboarding/onboarding.html') });
+  }
+});
 
 chrome.tabs.onActivated.addListener((activeInfo) => {
   onTabActivated(activeInfo);
@@ -72,6 +87,28 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       case Msg.SET_THETA:
         sendResponse({ ok: true, ...(await setTheta(msg.theta)) });
         break;
+
+      case Msg.COMPLETE_ONBOARDING: {
+        // 診断スコア→初期θのルックアップと保存。
+        // 既にセッション実績かオンボーディング完了があるプロファイルでは、θを上書き
+        // しない(進行中の漸減を診断のやり直しで壊さない)。目標と回答は常に更新する。
+        const answers = Array.isArray(msg.answers) ? msg.answers.map((v) => Number(v) || 0) : [];
+        const score = answers.reduce((a, v) => a + v, 0);
+        const state = await getState();
+        const sessions = await getAllSessions();
+        const fresh = sessions.length === 0 && !state.onboarded_at;
+        if (fresh) {
+          const table = DIAGNOSIS.thetaByScore;
+          state.theta = table[Math.min(Math.max(score, 0), table.length - 1)];
+          state.day_start_theta = state.theta;
+        }
+        state.diag_answers = answers;
+        if (typeof msg.goal === 'string' && msg.goal in GOALS) state.goal = msg.goal;
+        state.onboarded_at = state.onboarded_at ?? Date.now();
+        await putState(state);
+        sendResponse({ ok: true, theta_applied: fresh });
+        break;
+      }
 
       case Msg.SET_GOAL: {
         // 週次目標(評価レイヤー)。stateへの書き込みはSW経由に揃える(制御器との競合回避)。

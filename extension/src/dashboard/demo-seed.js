@@ -151,7 +151,8 @@ export async function seedDemoData() {
     fail_streak: 0,
     day: null,
     day_start_theta: 0.7,
-    diag_answers: null,
+    diag_answers: [1, 0, 0, 1],
     goal: 'level3',
+    onboarded_at: now - 72 * day, // 玄人はオンボーディング済み(popupの誘導を出さない)
   });
 }
