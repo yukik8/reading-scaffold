@@ -12,7 +12,7 @@ const v = new URL(import.meta.url).search;
 const mod = (path) => import(chrome.runtime.getURL(path) + v);
 
 const { Msg, EventType } = await mod('src/shared/events.js');
-const { SESSION, AMBIENT, THETA_MAX, EFFECT_TIERS, QUIZ, DEMO } =
+const { SESSION, AMBIENT, THETA_MAX, EFFECT_TIERS, QUIZ, DEMO, FORESHADOW, CEILING } =
   await mod('src/shared/config.js');
 const { createOverlay, setTextColumn, setDemoTheta } = await mod('src/content/overlay.js');
 const { pickHint } = await mod('src/content/hints.js');
@@ -173,16 +173,55 @@ function isReading() {
 }
 
 let localReadMs = 0; // ヒント文面用のローカル概算(正はSW側)
+let forewarnTicks = 0; // 先触れが続いたdwell tick数(発火保証用)
+let readMsSinceStimulus = 0; // 最後の演出からの実読書時間(天井用)
 
 const dwellTimer = setInterval(() => {
   if (document.hidden) return; // 非表示タブの鼓動はSW側の状態機械と二重計上になるため送らない
   if (!isReading()) return;
   localReadMs += SESSION.dwellTickMs;
+  readMsSinceStimulus += SESSION.dwellTickMs;
   report(EventType.DWELL_TICK, { visible_paragraph_range: visibleRange() });
   // スクロールが起きないページ(短い記事・全段落が最初から画面内)のための
   // フォールバック: 読んでいる鼓動に合わせて、可視の候補段落からヒントを出す。
   fireHintFromVisible();
+  guaranteeForewarn();
+  maybeCeilingHint();
 }, SESSION.dwellTickMs);
+
+/**
+ * 先触れの保証: 金/虹の先触れを見せ始めたのに段落がなかなか来ない場合、
+ * guaranteeTicks(約1分)で必ず本演出を出す。予告を裏切らない(ニアミス禁止)。
+ */
+function guaranteeForewarn() {
+  const fw = approachingRare();
+  if (!fw) {
+    forewarnTicks = 0;
+    return;
+  }
+  forewarnTicks += 1;
+  if (forewarnTicks >= FORESHADOW.guaranteeTicks) showHint(fw.idx);
+}
+
+/**
+ * 天井の一滴: θ>0なのに演出ゼロの実読書が続いたら、いま画面内の段落で
+ * normal一回を確定させる(下限保証)。残り時間の表示・示唆はしない —
+ * ハマリを期待に変える技法は滞在最大化の道具なので移植しない。
+ */
+function maybeCeilingHint() {
+  if (!CEILING.enabled || mode !== 'full' || theta <= 0) return;
+  const ceilingMin = Math.min(
+    CEILING.maxMinutes,
+    Math.max(CEILING.minMinutes, CEILING.perThetaMinutes / theta),
+  );
+  if (readMsSinceStimulus < ceilingMin * 60_000) return;
+  const range = visibleRange();
+  if (!range) return;
+  const idx = range[1];
+  pendingHintAt.add(idx);
+  pendingTierAt.set(idx, 'normal');
+  showHint(idx);
+}
 
 // ---- オーバーレイとヒント(θ駆動) ---------------------------------------
 //
@@ -197,9 +236,13 @@ const HINT_GRACE_MS = 8_000; // 開いた瞬間に光らせない+開始通知�
 let theta = 0;
 let hintsShown = 0;
 let pendingHintAt = new Set(); // ヒントを出す段落index
+// レア度は計画時に事前ロールする(v0.11.0)。発火の瞬間ではなく前から決まっている
+// ことで「先触れ」(予期の窓)が作れる。ドーパミンはcueで出る — 待ちを設計する。
+let pendingTierAt = new Map(); // idx -> 'normal' | 'rare' | 'epic'
 
 function planHints() {
   pendingHintAt = new Set();
+  pendingTierAt = new Map();
   if (mode !== 'full' || theta <= 0) return;
   const target = Math.max(1, Math.round((theta * totalWords) / 1000));
   const remaining = Math.max(0, target - hintsShown);
@@ -213,7 +256,26 @@ function planHints() {
     const j = Math.floor(Math.random() * (i + 1));
     [candidates[i], candidates[j]] = [candidates[j], candidates[i]];
   }
-  for (const idx of candidates.slice(0, remaining)) pendingHintAt.add(idx);
+  for (const idx of candidates.slice(0, remaining)) {
+    pendingHintAt.add(idx);
+    pendingTierAt.set(idx, rollTier());
+  }
+}
+
+/**
+ * 先触れの対象: 未読の近い範囲(aheadParagraphs)にレア以上が待っているか。
+ * あれば {idx, tier}。虹(epic)優先。
+ */
+function approachingRare() {
+  let best = null;
+  for (const idx of pendingHintAt) {
+    const tier = pendingTierAt.get(idx);
+    if (tier !== 'rare' && tier !== 'epic') continue;
+    if (idx <= maxDepthIdx || idx > maxDepthIdx + FORESHADOW.aheadParagraphs) continue;
+    if (tier === 'epic') return { idx, tier };
+    best = { idx, tier };
+  }
+  return best;
 }
 
 // 演出のレア度ロール。頻度はθが決め、ここは「大きさ」だけを予測不能にする。
@@ -279,6 +341,7 @@ async function startQuiz() {
   if (quizUsed || !isReading()) return; // 生成中に状況が変わっていたら出さない
   quizUsed = true;
   hintsShown += 1;
+  readMsSinceStimulus = 0;
   report(EventType.HINT_SHOWN, { hint_id: 'quiz_llm', kind: 'quiz' });
   // 正解時の演出の強さはθ連動: θが高いほど盛大に、卒業に向けて静かになる
   // デモでも強さはθに従う(初心者=大当たり、玄人=静かな二波)。
@@ -303,8 +366,14 @@ async function startQuiz() {
 }
 
 function showHint(idx) {
+  const tier = pendingTierAt.get(idx) ?? rollTier();
   pendingHintAt.delete(idx);
-  if (maybeQuizInsteadOfHint()) return; // このヒント枠はクイズに使う
+  pendingTierAt.delete(idx);
+  forewarnTicks = 0;
+  readMsSinceStimulus = 0;
+  // クイズに化けるのはnormal枠だけ。レア以上は先触れで「金/虹が来る」と
+  // 予告済みなので、別物にすり替えない(予告を裏切らない)。
+  if (tier === 'normal' && maybeQuizInsteadOfHint()) return;
   hintsShown += 1;
   const { hint_id, text } = pickHint({
     pct: completionPct(),
@@ -314,18 +383,21 @@ function showHint(idx) {
   report(EventType.HINT_SHOWN, { hint_id, kind: 'canned' });
   const onClick = () => report(EventType.HINT_CLICKED, { hint_id });
 
-  const tier = rollTier();
   if (tier === 'normal') {
     overlay.showHint(text, { onClick });
     return;
   }
-  // レア以上: 予告の光→約1秒後に金の雨。予告は必ず当たる(ニアミスは作らない)。
+  // レア以上: 予告の光→約1秒後に雨(レア=金、激レア=虹)。予告は必ず当たる。
+  // 激レアは予告が二度瞬く(擬似連の1.5秒版) — 二拍の待ちが期待の窓を広げる。
   overlay.showHint(text, { onClick, quiet: true });
-  overlay.foreshadow();
-  setTimeout(() => {
-    overlay.rain(tier);
-    report(EventType.EFFECT_SHOWN, { effect_id: `rain_${tier}` });
-  }, 950);
+  overlay.foreshadow(tier === 'epic' ? 2 : 1);
+  setTimeout(
+    () => {
+      overlay.rain(tier);
+      report(EventType.EFFECT_SHOWN, { effect_id: `rain_${tier}` });
+    },
+    tier === 'epic' ? 1_500 : 950,
+  );
 }
 
 /** 主経路: 候補段落が新しく画面に入った瞬間(段落境界)。 */
@@ -372,7 +444,17 @@ const ambientTimer = AMBIENT.enabled
   ? setInterval(() => {
       if (document.hidden || mode !== 'full' || theta <= 0) return;
       if (!isReading()) return; // 読む手が止まっているときに光らせない
-      // 均等に湧かせず、たまに「キラッ」と固まって瞬く(予測不能性)
+      // 先触れ: 少し先の段落にレア以上が待っているとき、地のきらきらが
+      // 金(激レアは虹)に変わる — 「もうすぐ来る」をcueで伝える予期の窓。
+      // 外れ予告は存在しないので、この色替わりは必ず本演出で回収される。
+      const fw = approachingRare();
+      if (fw) {
+        if (Math.random() < 0.45) {
+          overlay.glint(3 + Math.floor(Math.random() * 5), fw.tier === 'epic' ? 'rainbow' : 'gold');
+        }
+        return;
+      }
+      // 日常: 銀の星。均等に湧かせず、たまに「キラッ」と固まって瞬く(予測不能性)
       const p =
         (theta / THETA_MAX) ** 2 *
         AMBIENT.maxClusterChance *

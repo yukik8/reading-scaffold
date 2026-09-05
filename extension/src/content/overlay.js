@@ -282,10 +282,31 @@ export function setDemoTheta(theta) {
   demoMega = theta >= 5;
 }
 
-const STAR_COLORS_DARK_BG = ['#ffd76a', '#ffe9a8', '#fff3c4', '#ffc94d'];
-const STAR_COLORS_LIGHT_BG = ['#d98f00', '#e6a817', '#c77f00', '#f0a92e'];
+// 色の語彙(v0.11.0): 銀=通常 / 金=レア確定 / 虹=激レア確定。
+// 外れ予告を作らない(予告は必ず当たる)ので、色がそのまま大きさの語彙になる —
+// パチンコの「保留の色=信頼度」から、信頼度を100%に固定して移植した形。
+// 言葉で教えないまま、色だけで学習される。
+const PALETTES = {
+  silver: {
+    dark: ['#e3e9f2', '#c9d2e0', '#f2f5fa', '#aeb8c9'],
+    light: ['#8a94a6', '#a4aebf', '#6f7a8d', '#98a2b3'],
+  },
+  gold: {
+    dark: ['#ffd76a', '#ffe9a8', '#fff3c4', '#ffc94d'],
+    light: ['#d98f00', '#e6a817', '#c77f00', '#f0a92e'],
+  },
+  rainbow: {
+    dark: ['#ffd76a', '#8fd3ff', '#ffa1b5', '#b7f0ad', '#d9b3ff'],
+    light: ['#d98f00', '#1f7fbf', '#c2495f', '#3f9142', '#7d4fc3'],
+  },
+};
 
-let starColors = STAR_COLORS_DARK_BG;
+let pageLight = false;
+
+function colorsOf(palette) {
+  const p = PALETTES[palette] ?? PALETTES.gold;
+  return pageLight ? p.light : p.dark;
+}
 
 function pageIsLight() {
   for (const el of [document.body, document.documentElement]) {
@@ -335,26 +356,31 @@ function spawnPos(fullField) {
   return { xPct: (x / innerWidth) * 100, scale: 1 };
 }
 
-function makeStar({ sizeMin, sizeMax, scale, delaySpread }) {
+function makeStar({ sizeMin, sizeMax, scale, delaySpread, palette = 'silver' }) {
   const s = document.createElement('span');
   s.className = 'sparkle';
   // 外向き+すこし上へ舞う
   const angle = Math.random() * Math.PI * 2;
   const dist = 30 + Math.random() * 70;
+  const colors = colorsOf(palette);
   s.style.setProperty('--dx', `${Math.cos(angle) * dist}px`);
   s.style.setProperty('--dy', `${Math.sin(angle) * dist * 0.6 - 24}px`);
   s.style.setProperty('--size', `${(sizeMin + Math.random() * (sizeMax - sizeMin)) * scale}px`);
   s.style.setProperty('--delay', `${Math.random() * delaySpread}s`);
-  s.style.setProperty('--c', starColors[Math.floor(Math.random() * starColors.length)]);
+  s.style.setProperty('--c', colors[Math.floor(Math.random() * colors.length)]);
   return s;
 }
 
-function burst(parent, count, { delaySpread = 0.8, sizeMin = 5, sizeMax = 18, fullField = false } = {}) {
+function burst(
+  parent,
+  count,
+  { delaySpread = 0.8, sizeMin = 5, sizeMax = 18, fullField = false, palette = 'silver' } = {},
+) {
   count = Math.round(count * demoFactor);
   sizeMax *= demoSize;
   for (let i = 0; i < count; i += 1) {
     const pos = spawnPos(fullField);
-    const s = makeStar({ sizeMin, sizeMax, scale: pos.scale, delaySpread });
+    const s = makeStar({ sizeMin, sizeMax, scale: pos.scale, delaySpread, palette });
     s.style.left = `${pos.xPct}%`;
     s.style.top = `${Math.random() * 100}%`;
     parent.append(s);
@@ -363,10 +389,10 @@ function burst(parent, count, { delaySpread = 0.8, sizeMin = 5, sizeMax = 18, fu
 }
 
 /** 波を重ねて「きらきらしている時間」を作る。counts = 各波の星の数。 */
-function shower(parent, counts, { interval = 1_200, fullField = false } = {}) {
+function shower(parent, counts, { interval = 1_200, fullField = false, palette = 'silver' } = {}) {
   counts.forEach((count, i) => {
     setTimeout(() => {
-      if (parent.isConnected) burst(parent, count, { delaySpread: 1.2, fullField });
+      if (parent.isConnected) burst(parent, count, { delaySpread: 1.2, fullField, palette });
     }, i * interval);
   });
 }
@@ -383,21 +409,27 @@ export function createOverlay() {
   field.className = 'field';
   shadow.append(field);
   document.documentElement.append(host);
-  starColors = pageIsLight() ? STAR_COLORS_LIGHT_BG : STAR_COLORS_DARK_BG;
+  pageLight = pageIsLight();
 
   let hintEl = null;
   let hintTimer = null;
 
   // ---- 内部の演出部品(公開メソッドとクイズ正解処理の両方から使う) ----
 
-  function fireForeshadow() {
-    const f = document.createElement('div');
-    f.className = 'foreshadow';
-    if (starColors === STAR_COLORS_LIGHT_BG) {
-      f.style.setProperty('--fs', 'rgba(217, 143, 0, 0.18)');
-    }
-    field.append(f);
-    setTimeout(() => f.remove(), 1_000);
+  /**
+   * 予告の光。pulses=2は「二度瞬き」(激レア確定のみ・擬似連の1.5秒版)。
+   * 呼んだ側は必ず本演出を続けること(ニアミス禁止)。
+   */
+  function fireForeshadow(pulses = 1) {
+    const sweep = () => {
+      const f = document.createElement('div');
+      f.className = 'foreshadow';
+      if (pageLight) f.style.setProperty('--fs', 'rgba(217, 143, 0, 0.18)');
+      field.append(f);
+      setTimeout(() => f.remove(), 1_000);
+    };
+    sweep();
+    if (pulses >= 2) setTimeout(sweep, 550);
   }
 
   function fireVignette() {
@@ -409,12 +441,14 @@ export function createOverlay() {
 
   function fireRain(tier) {
     if (tier !== 'rare') fireVignette();
+    // 色の語彙: レア=金、激レア・大当たり=虹
+    const colors = colorsOf(tier === 'rare' ? 'gold' : 'rainbow');
     const count = Math.round((tier === 'jackpot' ? 130 : tier === 'epic' ? 90 : 45) * demoFactor);
     const sizeSpread = (tier === 'jackpot' ? 18 : tier === 'epic' ? 14 : 10) * demoSize;
     for (let i = 0; i < count; i += 1) {
       const s = document.createElement('span');
       s.className = 'rainstar';
-      s.style.setProperty('--c', starColors[Math.floor(Math.random() * starColors.length)]);
+      s.style.setProperty('--c', colors[Math.floor(Math.random() * colors.length)]);
       s.style.setProperty('--size', `${6 + Math.random() * sizeSpread}px`);
       s.style.setProperty('--dur', `${1.6 + Math.random() * 1.4}s`);
       s.style.setProperty('--delay', `${Math.random() * (tier === 'jackpot' ? 1.8 : 1.2)}s`);
@@ -456,12 +490,12 @@ export function createOverlay() {
     };
   }
 
-  /** 大当たり。予告→縁光二連→特濃の雨+星の三波。約5秒のウォーー。 */
+  /** 大当たり。予告二度瞬き→縁光二連→特濃の虹の雨+星の三波。約5秒のウォーー。 */
   function fireJackpot() {
-    fireForeshadow();
+    fireForeshadow(2);
     setTimeout(() => {
       fireRain('jackpot');
-      shower(field, [60, 40, 20], { fullField: true }); // ピーク時だけ全画面
+      shower(field, [60, 40, 20], { fullField: true, palette: 'rainbow' }); // ピーク時だけ全画面
       setTimeout(fireVignette, 1_200); // 縁光の二拍目
       if (DEMO.enabled && demoMega) {
         // デモ(高θのみ): 二の矢・三の矢まで撃つ(計約9秒)
@@ -471,7 +505,7 @@ export function createOverlay() {
         }, 2_600);
         setTimeout(() => {
           fireRain('jackpot');
-          shower(field, [60, 40], { fullField: true });
+          shower(field, [60, 40], { fullField: true, palette: 'rainbow' });
         }, 4_400);
       }
     }, 950);
@@ -538,13 +572,13 @@ export function createOverlay() {
      * 地の演出「キラッ」: 余白のランダムな一点に、星が固まって瞬く。
      * 一定間隔で均等に湧く単調さをやめて、突発的な一瞬のきらめきにする。
      */
-    glint(count) {
+    glint(count, palette = 'silver') {
       count = Math.round(count * demoFactor);
       const pos = spawnPos(false);
       const baseX = (pos.xPct / 100) * innerWidth;
       const baseY = (10 + Math.random() * 80) * (innerHeight / 100);
       for (let i = 0; i < count; i += 1) {
-        const s = makeStar({ sizeMin: 5, sizeMax: 13, scale: pos.scale, delaySpread: 0.35 });
+        const s = makeStar({ sizeMin: 5, sizeMax: 13, scale: pos.scale, delaySpread: 0.35, palette });
         s.style.left = `${baseX + (Math.random() - 0.5) * 44}px`;
         s.style.top = `${baseY + (Math.random() - 0.5) * 80}px`;
         field.append(s);
@@ -598,12 +632,13 @@ export function createOverlay() {
           // 正解の選択肢が光る(事実)+ 星(雰囲気)だけで伝える
           buttons[quiz.answer_index].classList.add('correct');
           if (correct) {
-            // 理解への報酬は最大瞬間風速。強さはθ連動(呼び手が決める)
+            // 理解への報酬は最大瞬間風速。強さはθ連動(呼び手が決める)。
+            // 確定報酬なので色は金以上(銀にしない — 理解は通常の上に置く)
             if (rewardTier === 'jackpot') fireJackpot();
             else if (rewardTier === 'rain') {
               fireForeshadow();
               setTimeout(() => fireRain('rare'), 950);
-            } else shower(field, [36, 20]);
+            } else shower(field, [36, 20], { palette: 'gold' });
           } else {
             burst(field, 8, { delaySpread: 0.6 }); // 参加への小さなきらめき(責めない)
           }
@@ -634,8 +669,8 @@ export function createOverlay() {
       wrap.append(card);
       shadow.append(wrap);
       requestAnimationFrame(() => wrap.classList.add('show'));
-      // お祝いはさらに濃く、画面全体で
-      shower(field, [80, 56, 32], { fullField: true }); // 読了はピーク: 全画面
+      // お祝いはさらに濃く、画面全体で。成功の確定報酬なので金
+      shower(field, [80, 56, 32], { fullField: true, palette: 'gold' }); // 読了はピーク: 全画面
       if (DEMO.enabled && demoMega) {
         // デモ(高θのみ): 金の雨+予告+縁光を重ねた大祝祭(約8秒)
         fireVignette();
@@ -645,7 +680,7 @@ export function createOverlay() {
         }, 800);
         setTimeout(() => {
           fireRain('epic');
-          shower(field, [80, 56], { fullField: true });
+          shower(field, [80, 56], { fullField: true, palette: 'rainbow' });
         }, 3_200);
         setTimeout(fireVignette, 4_800);
       }
