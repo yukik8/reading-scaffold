@@ -472,6 +472,8 @@ function shower(parent, counts, { interval = 1_200, fullField = false, palette =
 }
 
 export function createOverlay() {
+  // 拡張リロードで残った古いオーバーレイ(幽霊スクリプトのFAB等)を先に消す。
+  for (const old of document.querySelectorAll('[data-rs-overlay]')) old.remove();
   const host = document.createElement('div');
   host.setAttribute('data-rs-overlay', '');
   const shadow = host.attachShadow({ mode: 'open' });
