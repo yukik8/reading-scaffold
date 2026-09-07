@@ -254,12 +254,12 @@ if (mode === 'full') {
       /* SW不在 */
     }
     if (!res?.ok) {
-      overlay.showNotice(
-        res?.error === 'unavailable'
-          ? 'この環境ではAIを呼び出せませんでした(Chromeの内蔵AIが未対応か準備中)'
-          : '回答できませんでした',
-        3_500,
-      );
+      const known = {
+        unavailable: 'この環境ではAIを呼び出せませんでした(内蔵AIが未対応・サーバ未起動)',
+        'no-session': '計測セッションが見つかりませんでした',
+        empty: '質問が空です',
+      };
+      overlay.showNotice(known[res?.error] ?? `回答できませんでした(${res?.error ?? 'no-response'})`, 4_000);
       return null;
     }
     const src = Number(res.source_index);
