@@ -7,6 +7,14 @@
 
 const TIMEOUT_MS = 20_000;
 
+// Prompt APIは出力品質と安全性の担保のため入出力言語の宣言を求める(未指定だと警告)。
+// 読者が触れるのは日本語と英語の本文なので両方を宣言する(対応: de,en,es,fr,ja)。
+const LANGS = ['ja', 'en'];
+const CREATE_OPTS = {
+  expectedInputs: [{ type: 'text', languages: LANGS }],
+  expectedOutputs: [{ type: 'text', languages: LANGS }],
+};
+
 function withTimeout(promise, ms = TIMEOUT_MS) {
   return Promise.race([
     promise,
@@ -34,6 +42,7 @@ function kickDownload() {
   (async () => {
     try {
       const s = await LanguageModel.create({
+        ...CREATE_OPTS,
         monitor(m) {
           m.addEventListener('downloadprogress', () => {});
         },
@@ -55,7 +64,7 @@ async function promptJson(systemPrompt, userPrompt, schema) {
   }
   let session = null;
   try {
-    session = await withTimeout(LanguageModel.create());
+    session = await withTimeout(LanguageModel.create(CREATE_OPTS));
     const raw = await withTimeout(
       session.prompt(`${systemPrompt}\n\n${userPrompt}`, { responseConstraint: schema }),
     );
@@ -91,6 +100,7 @@ export async function nanoDiagnostics() {
   try {
     const session = await withTimeout(
       LanguageModel.create({
+        ...CREATE_OPTS,
         monitor(m) {
           m.addEventListener('downloadprogress', (e) => {
             progress = Math.round((e.loaded ?? 0) * 100);
