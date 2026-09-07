@@ -232,6 +232,43 @@ function maybeCeilingHint() {
 
 const overlay = createOverlay();
 const overlayStartedAt = Date.now();
+
+// ---- 自分からの問い(道具カテゴリ・常設FAB) ------------------------------
+//
+// 卒業の定義「刺激の起点が自分になる」の実体化(docs/ask-and-nano-design.md)。
+// θ配下に置かない(漸減しない)・回答に演出をつけない・1問1答。
+// 文脈は読了済み段落のみ(未読は渡さない=ネタバレ禁止)。制御器には一切入れない。
+
+if (mode === 'full') {
+  overlay.mountAsk(async (question) => {
+    const selection = String(getSelection() ?? '').slice(0, 500);
+    const end = Math.min(maxDepthIdx, paragraphs.length - 1);
+    const context = [];
+    for (let i = Math.max(0, end - 5); i <= end; i += 1) {
+      context.push({ i, text: (paragraphs[i].innerText ?? '').slice(0, 800) });
+    }
+    let res = null;
+    try {
+      res = await chrome.runtime.sendMessage({ type: Msg.ASK_REQUEST, question, selection, context });
+    } catch {
+      /* SW不在 */
+    }
+    if (!res?.ok) {
+      overlay.showNotice(
+        res?.error === 'unavailable'
+          ? 'この環境ではAIを呼び出せませんでした(Chromeの内蔵AIが未対応か準備中)'
+          : '回答できませんでした',
+        3_500,
+      );
+      return null;
+    }
+    const src = Number(res.source_index);
+    const sourceEl =
+      Number.isInteger(src) && src >= 0 && paragraphs[src]?.isConnected ? paragraphs[src] : null;
+    overlay.showAnswer(res.answer, { sourceEl });
+    return res;
+  });
+}
 const HINT_GRACE_MS = 8_000; // 開いた瞬間に光らせない+開始通知と重ねない
 let theta = 0;
 let hintsShown = 0;

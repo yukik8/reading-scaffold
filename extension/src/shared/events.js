@@ -20,6 +20,7 @@ export const EventType = {
   HINT_CLICKED: 'hint_clicked',
   EFFECT_SHOWN: 'effect_shown',
   QUIZ_ANSWERED: 'quiz_answered', // { correct }
+  QUESTION_ASKED: 'question_asked', // { chars } 文面は入れない(本文は記録層のquestionsのみ)
   SESSION_END: 'session_end',
   THETA_UPDATE: 'theta_update', // { from, to, reason } 制御器の動き(本人には通知しない・分析用)
 };
@@ -48,6 +49,7 @@ export const Msg = {
   SET_THETA: 'set_theta', // θ手動ダイヤル(連続値。ドッグフーディング用、W3で自動化)
   SET_GOAL: 'set_goal', // 週次目標の選択(評価レイヤーのみ。制御器は読まない)
   COMPLETE_ONBOARDING: 'complete_onboarding', // 初回診断+目標選択の確定(θの初期配置)
-  QUIZ_REQUEST: 'quiz_request', // content→SW: 段落テキストからクイズ生成(SWがサーバへfetch)
+  QUIZ_REQUEST: 'quiz_request', // content→SW: 段落テキストからクイズ生成(Nano→サーバの順)
+  ASK_REQUEST: 'ask_request', // content→SW: 自分からの問い(道具。Nanoのみ・1問1答)
   WIPE_ALL: 'wipe_all',
 };

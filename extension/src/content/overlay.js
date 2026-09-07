@@ -11,11 +11,11 @@ const CSS = `
     font-family: system-ui, -apple-system, "Hiragino Sans", sans-serif;
   }
 
-  /* ヒントカード(右下・小さく) */
+  /* ヒントカード(右下・小さく)。最下段は問いのFABに譲る */
   .hint {
     position: fixed;
     right: 20px;
-    bottom: 20px;
+    bottom: 64px;
     z-index: 2147483646;
     max-width: 260px;
     display: flex;
@@ -86,11 +86,85 @@ const CSS = `
     100% { opacity: 0; transform: translate(var(--dx), var(--dy)) rotate(220deg) scale(0.1); }
   }
 
+  /* 問いのFAB(道具カテゴリ・常設)。小さく半透明 — 視界の主役にならない */
+  .ask-fab {
+    position: fixed;
+    right: 20px;
+    bottom: 20px;
+    z-index: 2147483646;
+    width: 30px;
+    height: 30px;
+    display: grid;
+    place-items: center;
+    padding: 0;
+    border-radius: 50%;
+    background: rgba(28, 28, 30, 0.8);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    cursor: pointer;
+    opacity: 0.45;
+    transition: opacity 0.2s ease;
+  }
+  .ask-fab:hover, .ask-fab.open {
+    opacity: 1;
+  }
+  .ask-fab .ring {
+    width: 12px;
+    height: 12px;
+    color: rgba(255, 255, 255, 0.92);
+  }
+  @media (prefers-color-scheme: light) {
+    .ask-fab {
+      background: rgba(255, 255, 255, 0.9);
+      border-color: rgba(0, 0, 0, 0.15);
+    }
+    .ask-fab .ring {
+      color: rgba(0, 0, 0, 0.75);
+    }
+  }
+
+  /* 問いの入力欄(FABから開く)。1問1答 — 会話UIにしない */
+  .ask-box {
+    position: fixed;
+    right: 20px;
+    bottom: 58px;
+    z-index: 2147483646;
+    width: 280px;
+    padding: 10px 14px;
+    border-radius: 12px;
+    background: rgba(28, 28, 30, 0.92);
+    color: rgba(255, 255, 255, 0.92);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.25);
+  }
+  @media (prefers-color-scheme: light) {
+    .ask-box {
+      background: rgba(255, 255, 255, 0.95);
+      color: rgba(0, 0, 0, 0.82);
+      border-color: rgba(0, 0, 0, 0.12);
+    }
+  }
+  .ask-box input {
+    width: 100%;
+    font: inherit;
+    font-size: 13px;
+    background: none;
+    border: none;
+    outline: none;
+    color: inherit;
+  }
+  .ask-box input::placeholder {
+    color: inherit;
+    opacity: 0.45;
+  }
+  .ask-box.busy {
+    opacity: 0.6;
+  }
+
   /* クイズカード。ヒントより一回り大きいが、無視すれば消える(操作の強制はしない) */
   .quiz {
     position: fixed;
     right: 20px;
-    bottom: 20px;
+    bottom: 64px;
     z-index: 2147483646;
     width: 300px;
     padding: 14px;
@@ -687,6 +761,91 @@ export function createOverlay() {
       const showMs = DEMO.enabled && demoMega ? 6_500 : 2_100;
       setTimeout(() => wrap.classList.remove('show'), showMs);
       setTimeout(() => wrap.remove(), showMs + 600);
+    },
+
+    /**
+     * 回答カード(道具)。ヒントと同じ枠に出すが、演出はつけない —
+     * 回答に星を撒くと質問がレバーになる。根拠段落があれば光で指す(照らす)。
+     */
+    showAnswer(text, { sourceEl = null } = {}) {
+      dismissHint();
+      const detachGlow = sourceEl ? attachSourceGlow(sourceEl) : null;
+      const el = document.createElement('div');
+      el.className = 'hint';
+      const ring = document.createElement('span');
+      ring.className = 'ring';
+      const body = document.createElement('span');
+      body.textContent = text;
+      el.append(ring, body);
+      let closed = false;
+      const close = () => {
+        if (closed) return;
+        closed = true;
+        detachGlow?.();
+        if (hintEl === el) dismissHint();
+      };
+      el.addEventListener('click', close);
+      shadow.append(el);
+      requestAnimationFrame(() => el.classList.add('show'));
+      hintEl = el;
+      clearTimeout(hintTimer);
+      hintTimer = setTimeout(close, 20_000);
+    },
+
+    /**
+     * 問いのFAB(常設・道具カテゴリ)。クリックで入力欄が開き、Enterで1問1答。
+     * onAsk(question) は {answer, sourceEl} か null(失敗。通知は呼び手が出す)を返す。
+     */
+    mountAsk(onAsk) {
+      const fab = document.createElement('button');
+      fab.className = 'ask-fab';
+      fab.type = 'button';
+      fab.title = '本文に問う';
+      const ring = document.createElement('span');
+      ring.className = 'ring';
+      fab.append(ring);
+
+      const box = document.createElement('div');
+      box.className = 'ask-box';
+      box.hidden = true;
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.placeholder = '本文への問い';
+      input.maxLength = 300;
+      box.append(input);
+
+      let busy = false;
+      const toggle = (open) => {
+        box.hidden = !open;
+        fab.classList.toggle('open', open);
+        if (open) input.focus();
+      };
+      fab.addEventListener('click', () => toggle(box.hidden));
+      input.addEventListener('keydown', async (e) => {
+        e.stopPropagation(); // ページ側のキーボードショートカットに食われない
+        if (e.key === 'Escape') {
+          toggle(false);
+          return;
+        }
+        if (e.key !== 'Enter' || busy) return;
+        const question = input.value.trim();
+        if (!question) return;
+        busy = true;
+        input.disabled = true;
+        box.classList.add('busy');
+        const res = await onAsk(question);
+        busy = false;
+        input.disabled = false;
+        box.classList.remove('busy');
+        if (res) {
+          input.value = '';
+          toggle(false); // 1問1答: 答えたら閉じる。続きはもう一度開いてから
+        } else {
+          input.focus();
+        }
+      });
+
+      shadow.append(fab, box);
     },
 
     destroy() {

@@ -1,7 +1,13 @@
 // ライブラリ(読書メモリの一覧)。記録層だけを読む。
 // これは「記録」カテゴリの表示: 事実の蓄積のみで、可変報酬・比較・警告は載せない。
 
-import { getAllPages, getAllQuizAttempts, getAllQuizzes, getAllSessions } from './store.js';
+import {
+  getAllPages,
+  getAllQuestions,
+  getAllQuizAttempts,
+  getAllQuizzes,
+  getAllSessions,
+} from './store.js';
 
 /**
  * @returns {Promise<Array<{
@@ -92,10 +98,11 @@ export async function buildThetaHistory() {
 
 /** 累計(ダッシュボード用)。 */
 export async function buildTotals() {
-  const [sessions, attempts, pages] = await Promise.all([
+  const [sessions, attempts, pages, questions] = await Promise.all([
     getAllSessions(),
     getAllQuizAttempts(),
     getAllPages(),
+    getAllQuestions(),
   ]);
   let readMs = 0;
   let unassistedMs = 0;
@@ -110,5 +117,7 @@ export async function buildTotals() {
     unassisted_min: Math.round(unassistedMs / 60_000),
     quiz_total: attempts.length,
     quiz_correct: attempts.filter((a) => a.correct).length,
+    // 自分からの問い = 興味の指標(帯とは別軸の「問いの自立」。制御器には入れない)
+    questions: questions.length,
   };
 }

@@ -15,6 +15,7 @@ import {
   getAllPages,
   getAllQuizzes,
   getAllQuizAttempts,
+  getAllQuestions,
 } from '../background/store.js';
 
 const $ = (id) => document.getElementById(id);
@@ -294,6 +295,7 @@ function drawTotals(t) {
     ['うち補助なし', `${t.unassisted_min}分`],
     ['クイズ回答', `${t.quiz_total}`],
     ['クイズ正解', `${t.quiz_correct}`],
+    ['自分からの問い', `${t.questions}`],
   ];
   for (const [k, v] of rows) {
     const div = document.createElement('div');
@@ -311,13 +313,14 @@ function drawTotals(t) {
 // ---- データ管理 -----------------------------------------------------------
 
 $('export').addEventListener('click', async () => {
-  const [state, sessions, events, pages, quizzes, attempts] = await Promise.all([
+  const [state, sessions, events, pages, quizzes, attempts, questions] = await Promise.all([
     getState(),
     getAllSessions(),
     getAllEvents(),
     getAllPages(),
     getAllQuizzes(),
     getAllQuizAttempts(),
+    getAllQuestions(),
   ]);
   const data = {
     format: 'reading-scaffold-export',
@@ -329,6 +332,7 @@ $('export').addEventListener('click', async () => {
     pages,
     quizzes,
     quiz_attempts: attempts,
+    questions,
   };
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
   const a = document.createElement('a');

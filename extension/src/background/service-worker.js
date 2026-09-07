@@ -3,8 +3,9 @@
 // tabs系のハンドラはsession.jsの中で必ずセッションの存在を確認し、
 // セッションが無いときは何も読まず何も書かずに戻る — 「計測はセッション中のみ」。
 
-import { Msg } from '../shared/events.js';
+import { Msg, EventType } from '../shared/events.js';
 import { QUIZ, GOALS, DIAGNOSIS } from '../shared/config.js';
+import { nanoQuiz, nanoAnswer } from './ai.js';
 import {
   startSession,
   endSession,
@@ -28,6 +29,8 @@ import {
   sha256Hex,
   getQuizByHash,
   addQuiz,
+  addQuestion,
+  appendEvent,
 } from './store.js';
 import { getCurrent as getCurrentSession } from './session.js';
 
@@ -126,48 +129,98 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         break;
 
       case Msg.QUIZ_REQUEST: {
-        // 本文テキストがページの外に出る唯一の経路。宛先はローカルサーバのみで、
-        // サーバは保存もログもしない(server/main.py)。失敗は静かに握りつぶし、
-        // content側は通常ヒントに戻る — クイズの都合で読書を壊さない。
-        try {
-          const ctrl = new AbortController();
-          const timer = setTimeout(() => ctrl.abort(), QUIZ.timeoutMs);
-          const r = await fetch(QUIZ.endpoint, {
-            method: 'POST',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ paragraph_text: msg.paragraph_text ?? '' }),
-            signal: ctrl.signal,
-          });
-          clearTimeout(timer);
-          const data = await r.json();
-          // 記録層: 出題されたクイズを保存(同一段落は再利用)。失敗しても表示は妨げない
-          if (data?.ok && data.quiz) {
-            try {
-              const text = (msg.paragraph_text ?? '').trim().slice(0, 2000);
-              const hash = await sha256Hex(text);
-              const existing = await getQuizByHash(hash);
-              if (existing) {
-                data.quiz_id = existing.quiz_id;
-              } else {
-                const current = await getCurrentSession();
-                data.quiz_id = await addQuiz({
-                  page_id: current?.page_id ?? null,
-                  paragraph_hash: hash,
-                  paragraph_excerpt: text.slice(0, 80),
-                  question: data.quiz.question,
-                  choices: data.quiz.choices,
-                  answer_index: data.quiz.answer_index,
-                  created_at: Date.now(),
-                });
-              }
-            } catch {
-              /* 記録失敗は無視 */
-            }
+        // クイズ生成。第一候補はChrome内蔵AI(Gemini Nano) — 本文がデバイスの外に
+        // 出ない。使えなければローカルサーバへフォールバック(これが本文がページの
+        // 外に出る唯一の経路。サーバは保存もログもしない)。両方失敗なら静かに
+        // 諦め、content側は通常ヒントに戻る — クイズの都合で読書を壊さない。
+        const text = (msg.paragraph_text ?? '').trim().slice(0, 2000);
+        let data = null;
+        const quiz = await nanoQuiz(text);
+        if (quiz) data = { ok: true, quiz, source: 'nano' };
+        if (!data) {
+          try {
+            const ctrl = new AbortController();
+            const timer = setTimeout(() => ctrl.abort(), QUIZ.timeoutMs);
+            const r = await fetch(QUIZ.endpoint, {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({ paragraph_text: text }),
+              signal: ctrl.signal,
+            });
+            clearTimeout(timer);
+            data = await r.json();
+            if (data) data.source = 'server';
+          } catch {
+            data = { ok: false, error: 'unreachable' };
           }
-          sendResponse(data);
-        } catch {
-          sendResponse({ ok: false, error: 'unreachable' });
         }
+        // 記録層: 出題されたクイズを保存(同一段落は再利用)。失敗しても表示は妨げない
+        if (data?.ok && data.quiz) {
+          try {
+            const hash = await sha256Hex(text);
+            const existing = await getQuizByHash(hash);
+            if (existing) {
+              data.quiz_id = existing.quiz_id;
+            } else {
+              const current = await getCurrentSession();
+              data.quiz_id = await addQuiz({
+                page_id: current?.page_id ?? null,
+                paragraph_hash: hash,
+                paragraph_excerpt: text.slice(0, 80),
+                question: data.quiz.question,
+                choices: data.quiz.choices,
+                answer_index: data.quiz.answer_index,
+                created_at: Date.now(),
+              });
+            }
+          } catch {
+            /* 記録失敗は無視 */
+          }
+        }
+        sendResponse(data);
+        break;
+      }
+
+      case Msg.ASK_REQUEST: {
+        // 自分からの問い(道具カテゴリ・1問1答)。Nanoのみ — 本文と質問を外に出さない。
+        // 回答に演出はつけない(質問をレバーにしない)。制御器にも一切入れない。
+        const current = await getCurrentSession();
+        if (!current) {
+          sendResponse({ ok: false, error: 'no-session' });
+          break;
+        }
+        const question = String(msg.question ?? '').slice(0, 300);
+        const selection = String(msg.selection ?? '').slice(0, 500);
+        const context = Array.isArray(msg.context)
+          ? msg.context
+              .slice(0, 8)
+              .map((c) => ({ i: Number(c?.i) || 0, text: String(c?.text ?? '').slice(0, 800) }))
+          : [];
+        if (!question.trim()) {
+          sendResponse({ ok: false, error: 'empty' });
+          break;
+        }
+        const res = await nanoAnswer({ question, selection, context });
+        if (!res) {
+          sendResponse({ ok: false, error: 'unavailable' });
+          break;
+        }
+        // 計測層には文字数だけ(層の分離: 文面は記録層のquestionsにのみ置く)
+        try {
+          await appendEvent(current.session_id, EventType.QUESTION_ASKED, {
+            chars: question.length,
+          });
+          await addQuestion({
+            page_id: current.page_id ?? null,
+            session_id: current.session_id,
+            question,
+            answer: res.answer,
+            created_at: Date.now(),
+          });
+        } catch {
+          /* 記録失敗は回答を妨げない */
+        }
+        sendResponse({ ok: true, answer: res.answer, source_index: res.source_index });
         break;
       }
 

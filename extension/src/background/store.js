@@ -8,7 +8,7 @@
 import { THETA_MAX } from '../shared/config.js';
 
 const DB_NAME = 'reading-scaffold';
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 
 let dbPromise = null;
 
@@ -49,6 +49,14 @@ export function openDb() {
         });
         attempts.createIndex('by_quiz', 'quiz_id');
         attempts.createIndex('by_page', 'page_id');
+      }
+      // v3: 自分からの問い(道具カテゴリの記録。docs/ask-and-nano-design.md)
+      if (!db.objectStoreNames.contains('questions')) {
+        const questions = db.createObjectStore('questions', {
+          keyPath: 'question_id',
+          autoIncrement: true,
+        });
+        questions.createIndex('by_page', 'page_id');
       }
     };
     req.onsuccess = () => resolve(req.result);
@@ -177,11 +185,20 @@ export function getAllQuizAttempts() {
   return run('quiz_attempts', 'readonly', (s) => s.getAll()).then((rows) => rows ?? []);
 }
 
+/** 自分からの問い(記録層)。問いと答えの本文はここにだけ置く。 */
+export function addQuestion(question) {
+  return run('questions', 'readwrite', (s) => s.add(question));
+}
+
+export function getAllQuestions() {
+  return run('questions', 'readonly', (s) => s.getAll()).then((rows) => rows ?? []);
+}
+
 // ---- 削除 -----------------------------------------------------------------
 
 /** データ削除。設定から1タップで呼ぶ。記録層(資産)も含めて全消去する。 */
 export async function wipeAll() {
-  for (const store of ['events', 'sessions', 'state', 'pages', 'quizzes', 'quiz_attempts']) {
+  for (const store of ['events', 'sessions', 'state', 'pages', 'quizzes', 'quiz_attempts', 'questions']) {
     await run(store, 'readwrite', (s) => s.clear());
   }
   await chrome.storage.session.clear();
