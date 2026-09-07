@@ -26,7 +26,7 @@ function withTimeout(promise, ms = TIMEOUT_MS) {
 export async function nanoAvailability() {
   try {
     if (typeof LanguageModel === 'undefined') return 'no-api';
-    return await LanguageModel.availability();
+    return await LanguageModel.availability(CREATE_OPTS);
   } catch {
     return 'no-api';
   }
@@ -89,7 +89,7 @@ export async function nanoDiagnostics() {
   const out = { hasApi: typeof LanguageModel !== 'undefined' };
   if (!out.hasApi) return out;
   try {
-    out.availability = await LanguageModel.availability();
+    out.availability = await LanguageModel.availability(CREATE_OPTS);
   } catch (e) {
     out.availability = 'error';
     out.availabilityError = String(e?.message ?? e);

@@ -370,7 +370,12 @@ $('ai-check').addEventListener('click', async () => {
       'この端末では内蔵AIを使えません(空きディスク約22GB・対応GPU/RAMが必要)。' +
       'クイズはローカルサーバがあればそちら経由で出ます。';
   } else if (d.created && d.sample) {
-    msg = `内蔵AIの準備ができました(応答: ${d.sample})。クイズと問いが使えます。`;
+    msg = `内蔵AIの準備ができました(応答: ${d.sample})。クイズと問いがこの端末内で完結します。`;
+  } else if (/space|disk|storage/i.test(d.createError ?? '')) {
+    msg =
+      'モデルのダウンロードに空き容量が足りません(約22GB必要)。この端末では内蔵AIを' +
+      '使えないため、クイズと問いはローカルサーバ経由になります(server/.env に鍵を置いて起動)。' +
+      '22GB空ければ将来この端末でも完全オンデバイスにできます。';
   } else if (d.createError || d.promptError) {
     msg = `準備中に問題: ${d.createError ?? d.promptError}` +
       (d.downloadProgress >= 0 ? `(DL ${d.downloadProgress}%)` : '');
