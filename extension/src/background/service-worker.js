@@ -200,7 +200,27 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           sendResponse({ ok: false, error: 'empty' });
           break;
         }
-        const res = await nanoAnswer({ question, selection, context });
+        // Nano優先(本文がデバイス外に出ない)。使えなければローカルサーバへ
+        // フォールバック。ただしサーバはAnthropic APIへ本文を転送する — この経路は
+        // ドッグフーディング用。βでは同意事項(docs/ask-and-nano-design.md §4)。
+        let res = await nanoAnswer({ question, selection, context });
+        if (!res) {
+          try {
+            const ctrl = new AbortController();
+            const timer = setTimeout(() => ctrl.abort(), QUIZ.timeoutMs);
+            const r = await fetch(QUIZ.askEndpoint, {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({ question, selection, context }),
+              signal: ctrl.signal,
+            });
+            clearTimeout(timer);
+            const data = await r.json();
+            if (data?.ok) res = { answer: data.answer, source_index: data.source_index };
+          } catch {
+            /* サーバ不在。下でunavailableを返す */
+          }
+        }
         if (!res) {
           sendResponse({ ok: false, error: 'unavailable' });
           break;

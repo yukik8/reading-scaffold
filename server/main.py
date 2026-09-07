@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import random
+import traceback
 from collections import OrderedDict
 
 import anthropic
@@ -14,7 +15,8 @@ from pydantic import BaseModel
 MODEL = os.environ.get("RS_QUIZ_MODEL", "claude-opus-5")
 
 app = FastAPI()
-# APIキーは ANTHROPIC_API_KEY か `ant auth login` のプロファイルから解決される。
+# APIキーは環境変数 ANTHROPIC_API_KEY から解決される(未設定だと生成時にTypeError:
+# "Could not resolve authentication method"。起動シェルで必ず export すること)。
 client = anthropic.Anthropic()
 
 SYSTEM = """あなたは読書支援ツール「reading-scaffold」の出題エンジンです。
@@ -51,9 +53,95 @@ class QuizRequest(BaseModel):
     article_context: str | None = None
 
 
+class AskContext(BaseModel):
+    i: int
+    text: str
+
+
+class AskRequest(BaseModel):
+    question: str
+    selection: str | None = None
+    context: list[AskContext] = []
+
+
+ASK_SYSTEM = """あなたは読書支援ツール「reading-scaffold」の伴走者です。
+読者が読書中に投げた問いに、渡された「読了済みの段落」だけを根拠に短く答えます。
+
+原則(「照らす、答えない」):
+- 必ず2〜3文で短く答える。長い説明・要約はしない
+- 読者がまだ読んでいない先の内容には触れない(ネタバレ禁止)。渡された段落の範囲で答える
+- 読書から連れ出さない: 雑談に応じない・話を広げない・次の問いを促さない
+- 根拠になった段落があれば、その番号を source_index に返す(無ければ -1)
+- 問いと同じ言語で答える
+
+出力は指定のJSONスキーマに従う。"""
+
+ASK_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "answer": {"type": "string"},
+        "source_index": {"type": "integer"},
+    },
+    "required": ["answer", "source_index"],
+    "additionalProperties": False,
+}
+
+
 @app.get("/healthz")
 def healthz():
     return {"ok": True, "model": MODEL}
+
+
+@app.post("/ask")
+def ask(req: AskRequest):
+    question = req.question.strip()[:300]
+    if len(question) < 2:
+        return {"ok": False, "error": "too_short"}
+
+    ctx = "\n\n".join(f"[{c.i}] {c.text[:800]}" for c in req.context[:8])
+    selection = (req.selection or "").strip()[:500]
+    user = ""
+    if selection:
+        user += f"読者が選択している本文: {selection}\n\n"
+    user += f"問い: {question}\n\n読了済みの段落:\n{ctx}"
+
+    try:
+        resp = client.beta.messages.create(
+            model=MODEL,
+            max_tokens=512,
+            system=ASK_SYSTEM,
+            betas=["server-side-fallback-2026-07-01"],
+            extra_body={"fallbacks": "default"},
+            output_config={
+                "effort": "low",
+                "format": {"type": "json_schema", "schema": ASK_SCHEMA},
+            },
+            messages=[{"role": "user", "content": user}],
+        )
+    except anthropic.APIError as e:
+        return {"ok": False, "error": type(e).__name__}
+    except Exception as e:
+        traceback.print_exc()
+        return {"ok": False, "error": type(e).__name__}
+
+    if resp.stop_reason == "refusal":
+        return {"ok": False, "error": "refusal"}
+
+    block = next((b for b in resp.content if b.type == "text"), None)
+    if block is None:
+        return {"ok": False, "error": "empty"}
+    try:
+        data = json.loads(block.text)
+    except json.JSONDecodeError:
+        return {"ok": False, "error": "bad_json"}
+
+    answer = data.get("answer")
+    if not isinstance(answer, str) or not answer.strip():
+        return {"ok": False, "error": "empty_answer"}
+    idx = data.get("source_index")
+    if not isinstance(idx, int):
+        idx = -1
+    return {"ok": True, "answer": answer.strip(), "source_index": idx}
 
 
 @app.post("/quiz")
@@ -89,6 +177,7 @@ def quiz(req: QuizRequest):
     except anthropic.APIError as e:
         return {"ok": False, "error": type(e).__name__}
     except Exception as e:  # 認証未設定等。拡張側はJSONを期待するので500にしない
+        traceback.print_exc()
         return {"ok": False, "error": type(e).__name__}
 
     if resp.stop_reason == "refusal":

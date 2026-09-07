@@ -111,6 +111,7 @@ export const QUIZ = {
   // 読了済み段落がこれ未満なら出さない(素材不足)
   minParagraphsRead: 3,
   endpoint: 'http://127.0.0.1:8787/quiz',
+  askEndpoint: 'http://127.0.0.1:8787/ask',
   timeoutMs: 12_000,
   // 正解時の演出の強さはθに連動(低Levelほど盛大に、卒業に向けて漸減):
   //   θ >= jackpotMinTheta → 大当たり(予告→縁光→特濃の雨+三波)
