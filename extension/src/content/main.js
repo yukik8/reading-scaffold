@@ -241,6 +241,7 @@ const overlayStartedAt = Date.now();
 
 if (mode === 'full') {
   overlay.mountAsk(async (question) => {
+    markInteraction(); // 問うことは読書中の活動。セッションを放置終了させない
     const selection = String(getSelection() ?? '').slice(0, 500);
     const end = Math.min(maxDepthIdx, paragraphs.length - 1);
     const context = [];
@@ -267,7 +268,7 @@ if (mode === 'full') {
       Number.isInteger(src) && src >= 0 && paragraphs[src]?.isConnected ? paragraphs[src] : null;
     overlay.showAnswer(res.answer, { sourceEl });
     return res;
-  });
+  }, markInteraction);
 }
 const HINT_GRACE_MS = 8_000; // 開いた瞬間に光らせない+開始通知と重ねない
 let theta = 0;

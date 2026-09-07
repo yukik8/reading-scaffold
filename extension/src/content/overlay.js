@@ -796,7 +796,7 @@ export function createOverlay() {
      * 問いのFAB(常設・道具カテゴリ)。クリックで入力欄が開き、Enterで1問1答。
      * onAsk(question) は {answer, sourceEl} か null(失敗。通知は呼び手が出す)を返す。
      */
-    mountAsk(onAsk) {
+    mountAsk(onAsk, onActivity = () => {}) {
       const fab = document.createElement('button');
       fab.className = 'ask-fab';
       fab.type = 'button';
@@ -820,9 +820,14 @@ export function createOverlay() {
         fab.classList.toggle('open', open);
         if (open) input.focus();
       };
-      fab.addEventListener('click', () => toggle(box.hidden));
+      fab.addEventListener('click', () => {
+        onActivity(); // 問いの操作は読書中の活動(セッションを放置終了させない)
+        toggle(box.hidden);
+      });
+      input.addEventListener('input', () => onActivity());
       input.addEventListener('keydown', async (e) => {
         e.stopPropagation(); // ページ側のキーボードショートカットに食われない
+        onActivity();
         if (e.key === 'Escape') {
           toggle(false);
           return;

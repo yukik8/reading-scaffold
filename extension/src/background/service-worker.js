@@ -207,7 +207,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         if (!res) {
           try {
             const ctrl = new AbortController();
-            const timer = setTimeout(() => ctrl.abort(), QUIZ.timeoutMs);
+            // 問いの回答はクイズより長くかかりうるので余裕をとる(12s→25s)
+            const timer = setTimeout(() => ctrl.abort(), 25_000);
             const r = await fetch(QUIZ.askEndpoint, {
               method: 'POST',
               headers: { 'content-type': 'application/json' },
