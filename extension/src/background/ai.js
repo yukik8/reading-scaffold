@@ -5,7 +5,7 @@
 // API: グローバルの LanguageModel。availability() → 'unavailable' | 'downloadable' |
 // 'downloading' | 'available'。構造化出力は responseConstraint(JSON Schema)。
 
-const TIMEOUT_MS = 15_000;
+const TIMEOUT_MS = 20_000;
 
 function withTimeout(promise, ms = TIMEOUT_MS) {
   return Promise.race([
@@ -24,11 +24,35 @@ export async function nanoAvailability() {
   }
 }
 
+// モデルDLは数GB。'downloadable'のときは裏で1度だけDLを起こし、完了(=available)
+// までは静かにnullを返す。DLの起動には初回ユーザージェスチャーが要ることがあるため、
+// 確実な起動はダッシュボードの「内蔵AIを準備」ボタン(ページ文脈)から行う。
+let downloadKicked = false;
+function kickDownload() {
+  if (downloadKicked) return;
+  downloadKicked = true;
+  (async () => {
+    try {
+      const s = await LanguageModel.create({
+        monitor(m) {
+          m.addEventListener('downloadprogress', () => {});
+        },
+      });
+      s.destroy();
+    } catch {
+      downloadKicked = false; // 失敗したら次回また試せるように
+    }
+  })();
+}
+
 async function promptJson(systemPrompt, userPrompt, schema) {
   const availability = await nanoAvailability();
   if (availability === 'no-api' || availability === 'unavailable') return null;
-  // 'downloadable'でもcreate()がダウンロードを始める。初回は間に合わずタイムアウト
-  // するが、裏で進んだダウンロードのおかげで次回以降は使える。
+  if (availability !== 'available') {
+    // まだ使えない(downloadable/downloading)。DLを起こしておき、今回は諦める。
+    kickDownload();
+    return null;
+  }
   let session = null;
   try {
     session = await withTimeout(LanguageModel.create());
@@ -45,6 +69,51 @@ async function promptJson(systemPrompt, userPrompt, schema) {
       /* 破棄失敗は無視 */
     }
   }
+}
+
+/**
+ * 診断: 実機で内蔵AIがどの状態か。ダッシュボードのdev欄から呼ぶ(ページ文脈で
+ * 実行するとユーザージェスチャーが保たれ、DL起動が確実になる)。
+ * create()も試み、進捗・エラーメッセージまで返す。
+ */
+export async function nanoDiagnostics() {
+  const out = { hasApi: typeof LanguageModel !== 'undefined' };
+  if (!out.hasApi) return out;
+  try {
+    out.availability = await LanguageModel.availability();
+  } catch (e) {
+    out.availability = 'error';
+    out.availabilityError = String(e?.message ?? e);
+    return out;
+  }
+  if (out.availability === 'unavailable') return out;
+  let progress = -1;
+  try {
+    const session = await withTimeout(
+      LanguageModel.create({
+        monitor(m) {
+          m.addEventListener('downloadprogress', (e) => {
+            progress = Math.round((e.loaded ?? 0) * 100);
+          });
+        },
+      }),
+      120_000, // DLは長い。診断は待つ
+    );
+    out.downloadProgress = progress;
+    try {
+      out.sample = String(
+        await withTimeout(session.prompt('日本語で「準備完了」とだけ返して'), 15_000),
+      ).slice(0, 60);
+      out.created = true;
+    } catch (e) {
+      out.promptError = String(e?.message ?? e);
+    }
+    session.destroy();
+  } catch (e) {
+    out.downloadProgress = progress;
+    out.createError = String(e?.message ?? e);
+  }
+  return out;
 }
 
 const QUIZ_SCHEMA = {

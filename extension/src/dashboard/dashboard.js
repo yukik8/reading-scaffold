@@ -7,6 +7,7 @@ import { THETA_MAX, DEMO, GOALS } from '../shared/config.js';
 import { seedDemoData } from './demo-seed.js';
 import { buildMirror } from '../background/mirror.js';
 import { buildKpi } from '../background/kpi.js';
+import { nanoDiagnostics } from '../background/ai.js';
 import { buildLibrary, buildQuizLog, buildTotals, buildThetaHistory } from '../background/library.js';
 import {
   getState,
@@ -351,6 +352,35 @@ $('seed-demo').addEventListener('click', async () => {
   await seedDemoData();
   await render();
   $('seed-demo').disabled = false;
+});
+
+// 内蔵AIの状態確認+DL起動。ページ文脈で実行(このクリックのジェスチャーで
+// ダウンロード起動が通る)。結果を人が読める言葉に翻訳して出す。
+$('ai-check').addEventListener('click', async () => {
+  $('ai-check').disabled = true;
+  $('ai-status').textContent = '確認中…(初回はモデルのダウンロードに数分かかることがあります)';
+  const d = await nanoDiagnostics();
+  let msg;
+  if (!d.hasApi) {
+    msg =
+      'このChromeにPrompt APIがありません。Chrome 138以降に更新し、必要なら ' +
+      'chrome://flags/#prompt-api-for-gemini-nano を有効化してください。';
+  } else if (d.availability === 'unavailable') {
+    msg =
+      'この端末では内蔵AIを使えません(空きディスク約22GB・対応GPU/RAMが必要)。' +
+      'クイズはローカルサーバがあればそちら経由で出ます。';
+  } else if (d.created && d.sample) {
+    msg = `内蔵AIの準備ができました(応答: ${d.sample})。クイズと問いが使えます。`;
+  } else if (d.createError || d.promptError) {
+    msg = `準備中に問題: ${d.createError ?? d.promptError}` +
+      (d.downloadProgress >= 0 ? `(DL ${d.downloadProgress}%)` : '');
+  } else {
+    msg = `状態: ${d.availability}` +
+      (d.downloadProgress >= 0 ? `・DL ${d.downloadProgress}%` : '') +
+      '。ダウンロード中の場合は完了後にもう一度お試しください。';
+  }
+  $('ai-status').textContent = msg;
+  $('ai-check').disabled = false;
 });
 
 $('wipe').addEventListener('click', async () => {
