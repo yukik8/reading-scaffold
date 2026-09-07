@@ -12,6 +12,29 @@ import anthropic
 from fastapi import FastAPI
 from pydantic import BaseModel
 
+
+def _load_dotenv():
+    """main.pyと同じ場所の .env を読み、未設定の環境変数だけ埋める(依存なしの最小実装)。
+    鍵をシェル履歴に残さず、`export` 無しで uvicorn を起動できるようにするため。
+    既に環境にある値は上書きしない(exportが優先)。"""
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+    try:
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, _, value = line.partition("=")
+                key = key.strip()
+                value = value.strip().strip('"').strip("'")
+                if key and key not in os.environ:
+                    os.environ[key] = value
+    except FileNotFoundError:
+        pass
+
+
+_load_dotenv()
+
 MODEL = os.environ.get("RS_QUIZ_MODEL", "claude-opus-5")
 
 app = FastAPI()

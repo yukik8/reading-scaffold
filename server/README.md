@@ -9,13 +9,15 @@ APIキーはサーバのみが持ち、拡張には渡さない。第一候補�
 ```bash
 cd server
 python3 -m venv .venv && ./.venv/bin/pip install -r requirements.txt   # 初回のみ
-export ANTHROPIC_API_KEY=sk-ant-...   # 必須。未設定だと全リクエストがTypeErrorになる
+echo 'ANTHROPIC_API_KEY=sk-ant-...' > .env                             # 鍵はここに(初回のみ)
 ./.venv/bin/uvicorn main:app --port 8787
 ```
 
-`ANTHROPIC_API_KEY` は起動したシェルの環境変数として必須。SDKはこれ(または明示指定)
-からのみ鍵を解決するため、未設定だと `/quiz`・`/ask` が
-`{"ok": false, "error": "TypeError"}`(認証方法を解決できない)を返す。
+`ANTHROPIC_API_KEY` は必須。`server/.env`(KEY=VALUE 形式)に置けば起動時に自動で
+読み込まれる — `export` は不要。`.env` は `.gitignore` 済みでコミットされない。
+`export ANTHROPIC_API_KEY=...` でシェルに直接入れてもよい(その場合はexportが優先)。
+未設定のままだと `/quiz`・`/ask` が `{"ok": false, "error": "TypeError"}`
+(認証方法を解決できない)を返す。
 
 モデルは既定で `claude-opus-5`(環境変数 `RS_QUIZ_MODEL` で変更可)。
 分類器の誤検知に備えてサーバ側フォールバック(`fallbacks: "default"`)を有効化済み。
