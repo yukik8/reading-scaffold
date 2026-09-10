@@ -344,12 +344,18 @@ import { DEMO } from '../shared/config.js';
 
 // デモモード: 増幅はθ連動。θが高い(初心者)ほど極端に盛り、
 // θが低い(玄人)はほぼ通常=静か。タペリングの物語をデモでも壊さない。
+// ON/OFFはmain.jsがstorageから読んでsetDemoEnabledで注入する(既定OFF)。
+let demoEnabled = false;
 let demoFactor = 1; // 星の数の倍率
 let demoSize = 1; // 星のサイズ倍率
 let demoMega = false; // 大盛り(二の矢・三の矢・大祝祭)を出すか
 
+export function setDemoEnabled(v) {
+  demoEnabled = v === true;
+}
+
 export function setDemoTheta(theta) {
-  if (!DEMO.enabled) return;
+  if (!demoEnabled) return;
   const s = Math.max(0, Math.min(1, theta / 8)) ** 1.5; // 高θに寄せる
   demoFactor = 1 + (DEMO.boost - 1) * s;
   demoSize = 1 + 0.25 * s;
@@ -573,7 +579,7 @@ export function createOverlay() {
       fireRain('jackpot');
       shower(field, [60, 40, 20], { fullField: true, palette: 'rainbow' }); // ピーク時だけ全画面
       setTimeout(fireVignette, 1_200); // 縁光の二拍目
-      if (DEMO.enabled && demoMega) {
+      if (demoEnabled && demoMega) {
         // デモ(高θのみ): 二の矢・三の矢まで撃つ(計約9秒)
         setTimeout(() => {
           fireForeshadow();
@@ -747,7 +753,7 @@ export function createOverlay() {
       requestAnimationFrame(() => wrap.classList.add('show'));
       // お祝いはさらに濃く、画面全体で。成功の確定報酬なので金
       shower(field, [80, 56, 32], { fullField: true, palette: 'gold' }); // 読了はピーク: 全画面
-      if (DEMO.enabled && demoMega) {
+      if (demoEnabled && demoMega) {
         // デモ(高θのみ): 金の雨+予告+縁光を重ねた大祝祭(約8秒)
         fireVignette();
         setTimeout(() => {
@@ -760,7 +766,7 @@ export function createOverlay() {
         }, 3_200);
         setTimeout(fireVignette, 4_800);
       }
-      const showMs = DEMO.enabled && demoMega ? 6_500 : 2_100;
+      const showMs = demoEnabled && demoMega ? 6_500 : 2_100;
       setTimeout(() => wrap.classList.remove('show'), showMs);
       setTimeout(() => wrap.remove(), showMs + 600);
     },

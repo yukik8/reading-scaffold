@@ -33,13 +33,34 @@ export const CONTROLLER = {
 export const THETA_NOISE = 0.1;
 
 // デモモード: 演出だけを全体的に派手にする。計測・制御・記録には一切影響しない。
-// デモが終わったら enabled: false に戻すこと。
+// ON/OFFはコード直書きをやめ、chrome.storage.local(プロフィールごとに独立)に置く。
+// これで「本番プロフィール=常時OFFでクリーンな計測」と「デモプロフィール=ONで派手」を
+// 同じコードのまま両立できる(フラグ書き換えの戻し忘れ事故が消える)。既定はOFF。
+// ONの間: 読了お祝いは成功条件を待たず必ず出る / クイズは最初のヒント枠で必ず出て
+// 正解は常に大当たり / レア演出の確率も大幅増。
 export const DEMO = {
-  enabled: true,
-  boost: 3, // 星の数の倍率(サイズも1.25倍)
-  // ONの間: 読了お祝いは成功条件を待たず必ず出る / クイズは最初の
-  // ヒント枠で必ず出て正解は常に大当たり / レア演出の確率も大幅増
+  boost: 3, // 星の数の倍率(サイズも1.25倍)。これは静的な調整値
 };
+
+const DEMO_KEY = 'demo_enabled';
+
+/** デモモードの現在値(プロフィールごと)。既定OFF。読めなければOFF扱い。 */
+export async function readDemoFlag() {
+  try {
+    const r = await chrome.storage.local.get(DEMO_KEY);
+    return r[DEMO_KEY] === true;
+  } catch {
+    return false;
+  }
+}
+
+export async function writeDemoFlag(value) {
+  try {
+    await chrome.storage.local.set({ [DEMO_KEY]: value === true });
+  } catch {
+    /* 失敗は無視(次回の読みでOFF扱い) */
+  }
+}
 
 export const SESSION = {
   // 読書時間の操作的定義: 本文段落が可視、かつ直近このミリ秒以内に

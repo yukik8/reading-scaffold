@@ -3,7 +3,7 @@
 // θ変更と全消去だけはSW経由(進行中セッションへの反映・後片付けがSWの仕事なので)。
 
 import { Msg } from '../shared/events.js';
-import { THETA_MAX, DEMO, GOALS } from '../shared/config.js';
+import { THETA_MAX, GOALS, readDemoFlag, writeDemoFlag } from '../shared/config.js';
 import { seedDemoData } from './demo-seed.js';
 import { buildMirror } from '../background/mirror.js';
 import { buildKpi } from '../background/kpi.js';
@@ -344,8 +344,18 @@ $('export').addEventListener('click', async () => {
   URL.revokeObjectURL(a.href);
 });
 
-// 玄人デモデータ(DEMOモード中のみ表示)。デモ用プロファイルで使う想定
-$('seed-demo').hidden = !DEMO.enabled;
+// デモモード(このプロフィール限定・storage.local)。切り替えると次のセッションから効く。
+async function refreshDemoUI() {
+  const on = await readDemoFlag();
+  $('demo').checked = on;
+  $('seed-demo').hidden = !on; // 玄人デモデータの投入はデモON時だけ見せる
+}
+$('demo').addEventListener('change', async () => {
+  await writeDemoFlag($('demo').checked);
+  await refreshDemoUI();
+});
+refreshDemoUI();
+
 $('seed-demo').addEventListener('click', async () => {
   if (!confirm('約10週間分の玄人デモ履歴を投入します(既存データに追記されます)。')) return;
   $('seed-demo').disabled = true;

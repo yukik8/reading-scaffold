@@ -12,9 +12,14 @@ const v = new URL(import.meta.url).search;
 const mod = (path) => import(chrome.runtime.getURL(path) + v);
 
 const { Msg, EventType } = await mod('src/shared/events.js');
-const { SESSION, AMBIENT, THETA_MAX, EFFECT_TIERS, QUIZ, DEMO, FORESHADOW, CEILING } =
+const { SESSION, AMBIENT, THETA_MAX, EFFECT_TIERS, QUIZ, FORESHADOW, CEILING, readDemoFlag } =
   await mod('src/shared/config.js');
-const { createOverlay, setTextColumn, setDemoTheta } = await mod('src/content/overlay.js');
+const { createOverlay, setTextColumn, setDemoTheta, setDemoEnabled } =
+  await mod('src/content/overlay.js');
+
+// デモモードの現在値(プロフィールごと・既定OFF)。セッション開始時にSWから受け取る。
+// 演出の増幅にだけ効き、計測・制御・記録には一切影響しない。
+let demoEnabled = false;
 const { pickHint } = await mod('src/content/hints.js');
 
 // ---- 本文検出(読み取り専用) --------------------------------------------
@@ -319,7 +324,7 @@ function approachingRare() {
 // 演出のレア度ロール。頻度はθが決め、ここは「大きさ」だけを予測不能にする。
 function rollTier() {
   const r = Math.random();
-  if (DEMO.enabled && theta >= 5) {
+  if (demoEnabled && theta >= 5) {
     // デモ(高θ=初心者側のみ): レア演出をどんどん出す。玄人は通常確率
     if (r < 0.35) return 'epic';
     if (r < 0.8) return 'rare';
@@ -344,7 +349,7 @@ function maybeQuizInsteadOfHint() {
   if (mode !== 'full') return false;
   if (maxDepthIdx + 1 < QUIZ.minParagraphsRead) return false;
   // デモでも頻度はθに従う: 初心者側(θ>=5)だけ確実に出し、玄人は通常の30%抽選
-  if (!(DEMO.enabled && theta >= 5) && Math.random() >= QUIZ.p) return false;
+  if (!(demoEnabled && theta >= 5) && Math.random() >= QUIZ.p) return false;
   startQuiz();
   return true;
 }
@@ -458,15 +463,15 @@ function fireHintFromVisible() {
 }
 
 // デモ: ヒント枠を待たず、開始直後からクイズを出しにいく(1問出たら止まる)。
+// demoEnabledは起動時(GET_STATUS後)に確定するので、生成条件でなくtick内で判定する。
 // これも初心者側(θ>=5)のみ — 玄人のクイズは通常経路の頻度に従う
-const demoQuizTimer =
-  DEMO.enabled && QUIZ.enabled
-    ? setInterval(() => {
+const demoQuizTimer = QUIZ.enabled
+  ? setInterval(() => {
         if (quizUsed) {
           clearInterval(demoQuizTimer);
           return;
         }
-        if (theta < 5) return; // 玄人はデモ加速なし
+        if (!demoEnabled || theta < 5) return; // デモOFF or 玄人はデモ加速なし
         if (quizInFlight || mode !== 'full' || maxDepthIdx < 0) return;
         startQuiz();
       }, 3_000)
@@ -496,7 +501,7 @@ const ambientTimer = AMBIENT.enabled
       const p =
         (theta / THETA_MAX) ** 2 *
         AMBIENT.maxClusterChance *
-        (DEMO.enabled && theta >= 5 ? 2.2 : 1);
+        (demoEnabled && theta >= 5 ? 2.2 : 1);
       if (Math.random() < Math.min(p, 0.9)) overlay.glint(3 + Math.floor(Math.random() * 5));
     }, AMBIENT.tickMs)
   : null;
@@ -514,7 +519,7 @@ function stop({ celebrate = false, readMin = 0 } = {}) {
   window.__readingScaffoldLoaded = false;
   if (celebrate) {
     overlay.celebrate(readMin);
-    setTimeout(() => overlay.destroy(), DEMO.enabled && theta >= 5 ? 7_500 : 2_800);
+    setTimeout(() => overlay.destroy(), demoEnabled && theta >= 5 ? 7_500 : 2_800);
   } else {
     overlay.destroy();
   }
@@ -553,6 +558,9 @@ for (let i = 0; i < 6 && !sessionInfo; i += 1) {
   }
   if (!sessionInfo) await new Promise((r) => setTimeout(r, 250));
 }
+// デモモード(プロフィールごと・既定OFF)を読み、演出系に反映してから計画する。
+demoEnabled = await readDemoFlag();
+setDemoEnabled(demoEnabled);
 theta = sessionInfo?.theta ?? 0;
 setDemoTheta(theta); // デモの増幅率もθ連動(玄人はほぼ通常=静か)
 planHints();

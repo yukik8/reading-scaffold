@@ -324,6 +324,19 @@ details.override input[type='range'] {
   accent-color: var(--gold);
 }
 
+.demo-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.demo-toggle input {
+  accent-color: var(--gold);
+}
+
 .obi-ends {
   display: flex;
   justify-content: space-between;
