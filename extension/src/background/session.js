@@ -20,7 +20,14 @@
 // ブラウザ終了で消える — セッションという意味に合う)。
 
 import { EventType, EndReason, SessionState } from '../shared/events.js';
-import { SESSION, SUCCESS, THETA_MAX, CONTROLLER, readDemoFlag } from '../shared/config.js';
+import {
+  SESSION,
+  SUCCESS,
+  THETA_MAX,
+  CONTROLLER,
+  STABILITY,
+  readDemoFlag,
+} from '../shared/config.js';
 import { dateKey } from '../shared/time.js';
 import {
   appendEvent,
@@ -33,7 +40,13 @@ import {
   getAllSessions,
   sha256Hex,
 } from './store.js';
-import { effectiveTheta, nextState, applyHomeostat, isSuccess } from './controller.js';
+import {
+  effectiveTheta,
+  nextState,
+  applyHomeostat,
+  isSuccess,
+  stabilityScore,
+} from './controller.js';
 
 const CURRENT_KEY = 'currentSession';
 export const WATCHDOG_ALARM = 'rs-watchdog';
@@ -109,6 +122,9 @@ export async function startSession(tabId) {
     longest_streak_ms: 0,
     cur_streak_ms: 0,
     last_dwell_at: null,
+    // 読書安定度 S の素材: 離れていた累計と、すぐ(60秒以内に)戻った回数
+    away_total_ms: 0,
+    quick_returns: 0,
   };
   await setCurrent(session);
   await appendEvent(session.session_id, EventType.SESSION_START, {
@@ -164,8 +180,15 @@ export async function endSession(reason) {
   await chrome.alarms.clear(WATCHDOG_ALARM);
   await chrome.action.setBadgeText({ text: '' });
 
+  // 離脱したまま終わった場合、その離脱時間も「離れていた累計」に足す(すぐ戻ったには数えない)
+  if (session.state === SessionState.ESCAPED && session.escaped_at) {
+    session.away_total_ms = (session.away_total_ms ?? 0) + (Date.now() - session.escaped_at);
+  }
+
   const success =
     session.read_ms >= SUCCESS.minReadMs && session.escapes <= SUCCESS.maxEscapes;
+  // 読書安定度 S(並走計測。制御にはまだ繋がない — 二値successとの一致率を見る段階)
+  const stability = stabilityScore(session, reason);
 
   // 読了お祝いは「セッション成功、かつθ>0」のときだけ。演出もθの配下にあり、
   // θ=0では何も出さない — 補助なし読書時間の定義を汚さないため。
@@ -196,6 +219,10 @@ export async function endSession(reason) {
     escapes: session.escapes,
     completion_pct: session.completion_pct,
     success,
+    stability, // 読書安定度 S(並走計測)
+    reason, // 終了理由(S の並走分析用)
+    away_total_ms: session.away_total_ms ?? 0,
+    quick_returns: session.quick_returns ?? 0,
     // 補助なし判定に使う。
     hints_shown: session.hints_shown,
     effects_shown: session.effects_shown,
@@ -497,9 +524,11 @@ async function escape(session, toDomain) {
 async function returnFromEscape(session) {
   if (session.state !== SessionState.ESCAPED) return;
   const now = Date.now();
-  await appendEvent(session.session_id, EventType.TAB_RETURN, {
-    away_ms: now - session.escaped_at,
-  });
+  const awayMs = now - session.escaped_at;
+  await appendEvent(session.session_id, EventType.TAB_RETURN, { away_ms: awayMs });
+  // S の素材: 離れていた累計と、すぐ戻った回数
+  session.away_total_ms = (session.away_total_ms ?? 0) + awayMs;
+  if (awayMs <= STABILITY.quickReturnMs) session.quick_returns = (session.quick_returns ?? 0) + 1;
   session.state = SessionState.ACTIVE;
   session.escaped_at = null;
   session.last_event_at = now;

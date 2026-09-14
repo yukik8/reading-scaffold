@@ -102,7 +102,10 @@
         </p>
         <div class="actions">
           <button id="export" type="button">JSONでエクスポート</button>
+          <button id="recalibrate" type="button">診断をやり直す</button>
         </div>
+        <p class="note">診断のやり直しは目標と回答を更新するだけで、補助の量(θ)は変わりません。
+          θを動かすのは読書の実績だけです。</p>
         <details class="override">
           <summary>開発用</summary>
           <label class="demo-toggle">
@@ -118,6 +121,7 @@
             <button id="seed-demo" type="button" hidden>玄人デモデータを投入</button>
           </div>
           <p id="ai-status" class="note"></p>
+          <p id="s-report" class="note"></p>
         </details>
         <div class="danger">
           <p class="danger-note">元に戻せない操作</p>

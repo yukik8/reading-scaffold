@@ -8,7 +8,13 @@ import { seedDemoData } from './demo-seed.js';
 import { buildMirror } from '../background/mirror.js';
 import { buildKpi } from '../background/kpi.js';
 import { nanoDiagnostics } from '../background/ai.js';
-import { buildLibrary, buildQuizLog, buildTotals, buildThetaHistory } from '../background/library.js';
+import {
+  buildLibrary,
+  buildQuizLog,
+  buildTotals,
+  buildThetaHistory,
+  buildStabilityReport,
+} from '../background/library.js';
 import {
   getState,
   getAllSessions,
@@ -398,6 +404,27 @@ $('ai-check').addEventListener('click', async () => {
   $('ai-check').disabled = false;
 });
 
+// 診断のやり直し(Recalibrate)。オンボーディングを再実行するが、SW側の
+// COMPLETE_ONBOARDING はセッション実績があれば θ を上書きしない(目標と回答だけ更新)。
+$('recalibrate').addEventListener('click', () => {
+  chrome.tabs.create({ url: chrome.runtime.getURL('src/onboarding/onboarding.html') });
+});
+
+/** S の並走レポート(dev)。二値successと並べて閾値を決めるための数字。 */
+function drawStabilityReport(r) {
+  const el = $('s-report');
+  if (!r || r.n === 0) {
+    el.textContent = 'S(読書安定度)の並走計測: まだ記録がありません(v0.14以降のセッションから)。';
+    return;
+  }
+  const f = (v) => (v === null ? '—' : v.toFixed(2));
+  const pct = r.agreement === null ? '—' : `${Math.round(r.agreement * 100)}%`;
+  el.textContent =
+    `S並走 ${r.n}件: 成功セッションの平均S ${f(r.mean_success)}(${r.n_success}) · ` +
+    `失敗の平均S ${f(r.mean_fail)}(${r.n_fail}) · 中間帯 ${r.n_mid}件 · ` +
+    `二値との一致 ${pct}(判定${r.n_decided}件)`;
+}
+
 $('wipe').addEventListener('click', async () => {
   if (!confirm('計測・読書メモリ・クイズ・θの状態をすべて消します。元に戻せません。')) return;
   if (!confirm('本当に消しますか?(エクスポートしていない記録は失われます)')) return;
@@ -508,6 +535,7 @@ async function render() {
   drawQuizzes(quizzes);
 
   drawTotals(await buildTotals());
+  drawStabilityReport(await buildStabilityReport());
 }
 
 render();

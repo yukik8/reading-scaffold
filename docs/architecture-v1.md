@@ -129,7 +129,7 @@ ACTIVE/ESCAPED ──[終了ボタン / タブclose / 無操作3分]──▶ EN
 - 実効θ = θ × (1 ± 0.1 の乱数)。迷彩: 日々±10%揺れる中を成功あたり10%下るので下降トレンドがノイズに埋もれる
 - **診断は事前分布を置くだけ**: 4問(0〜2点)の合計 → `DIAGNOSIS.thetaByScore` = [2,3,4,5,5.5,6,7,7.5,8]。以後 θ を動かすのは制御器だけ。診断のやり直しは θ を上書きしない(セッション実績が1つでもあれば prior は無視)
 
-### S(読書安定度)— 計画(v1で導入)
+### S(読書安定度)— v0.14 で並走計測を開始(制御には未接続)
 
 現行の success は `read_ms ≥ 5分 かつ escapes ≤ 1` の二値で、「20分読んで1回逸れた」と「5分ぎりぎり」を区別できない。v1 では S ∈ [0,1] に格上げする。**ルールベース**(MLにしない)。
 
@@ -240,7 +240,7 @@ memory_items(記録層・ローカルのみ)
 | 制御層 | `state`(単一) | θ・streak・診断回答・目標・onboarded_at・homeostat | 持たない | ローカルのみ |
 | 記録層 | `pages` `quizzes` `quiz_attempts` `questions` (計画)`memory_items` | 読書メモリ=本人の資産 | **持つ** | **ローカルのみ** |
 
-- `sessions` の1行: `{ session_id, date, started_at, domain, page_id, theta, theta_base, read_ms, escapes, completion_pct, success, hints_shown, effects_shown, longest_streak_ms }`(計画: `S` を追加)
+- `sessions` の1行: `{ session_id, date, started_at, domain, page_id, theta, theta_base, read_ms, escapes, completion_pct, success, stability, reason, away_total_ms, quick_returns, hints_shown, effects_shown, longest_streak_ms }`。`stability` が S(v0.14〜・並走計測)
 - `events.type`: session_start / dwell_tick / scroll / tab_escape / tab_return / hint_shown / hint_clicked / effect_shown / quiz_answered / question_asked / session_end / theta_update
 - プロフィール別設定(`chrome.storage.local`): `demo_enabled`(演出の増幅のみ。計測・制御・記録に影響しない・既定OFF)
 - 全消去は1タップで7ストア+storage を空にする(記録層=資産も含む。「計測だけ消す」は将来)
@@ -275,7 +275,7 @@ QUIZ_REQUEST / ASK_REQUEST
 ```
 
 - 診断結果を「中毒度スコア」として本人に見せない(ラベリングは責めない原則に反する)
-- (計画) ダッシュボードに **Recalibrate**(目標の変更は既にある。診断のやり直しは θ を触らない)
+- ダッシュボードに **Recalibrate**(「診断をやり直す」・v0.14)。オンボーディングを再実行するが θ は触らない(目標と回答だけ更新)
 
 ### 評価レイヤー(kpi.js・現物)
 
@@ -319,13 +319,11 @@ QUIZ_REQUEST / ASK_REQUEST
 
 ### 順番(小さく・計測を止めずに)
 
-1. **ドキュメントの一本化**(本書・archive・README の参照差し替え) — これで「source of truth が複数世代」は解消
-2. **S の導入**: `sessions.S` を計算・保存し、まず二値 success と並走させて一致率を見る(制御には接続しない)
-3. S を制御器に接続(§5 の閾値)+ fading.md の3修正。α/β は据え置き
+1. ~~ドキュメントの一本化~~ 済(2026-09-14)
+2. ~~S の並走計測~~ 済(v0.14): `sessions.stability` を保存し、ダッシュボードdev欄に二値との一致率を表示。制御には未接続
+3. S を制御器に接続(§5 の閾値)+ fading.md の3修正。α/β は据え置き — 並走データが2〜3週たまってから
 4. `memory_items`(DB v4)+終了時の想起カード。演出なし・無視可
-5. Recalibrate / `/metrics` / βの同意画面
-
-1 は今日、2〜3 はドッグフーディングのデータが2〜3週たまってから、4 は OIST 後でよい。11月の中間発表は現物(θ×達成率)で戦える。
+5. ~~Recalibrate~~ 済(v0.14) / `/metrics` / βの同意画面
 
 ---
 

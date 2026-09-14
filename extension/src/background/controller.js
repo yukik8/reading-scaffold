@@ -9,10 +9,38 @@
 //   2. 1日の総変化は±maxDailyChangeRatioまで。
 //   3. 卒業(θ=0)後は監視のみ。再展開はホメオスタットだけが行う。
 
-import { THETA_MAX, CONTROLLER, SUCCESS, THETA_NOISE } from '../shared/config.js';
+import { THETA_MAX, CONTROLLER, SUCCESS, THETA_NOISE, STABILITY } from '../shared/config.js';
 
 export function isSuccess(session) {
   return session.read_ms >= SUCCESS.minReadMs && session.escapes <= SUCCESS.maxEscapes;
+}
+
+/**
+ * 読書安定度 S ∈ [0,1]。行動シグナルだけから計算する(理解・エンゲージメント指標は入れない)。
+ * v0.14 は並走計測のみで、nextState はまだ isSuccess を使う。
+ * @param {object} session - { read_ms, escapes, away_total_ms, quick_returns, completion_pct }
+ * @param {string} reason - 終了理由 manual | close | idle
+ */
+export function stabilityScore(session, reason) {
+  const w = STABILITY.weights;
+  const clamp01 = (v) => Math.min(1, Math.max(0, v));
+  const escapes = session.escapes ?? 0;
+
+  const dur = clamp01((session.read_ms ?? 0) / 60_000 / STABILITY.durFullMin);
+  const escapeTerm =
+    clamp01(1 - escapes / STABILITY.escapeFullCount) *
+    clamp01(1 - (session.away_total_ms ?? 0) / STABILITY.awayFullMs);
+  const returnTerm = escapes > 0 ? clamp01((session.quick_returns ?? 0) / escapes) : 1;
+  const completion = clamp01((session.completion_pct ?? 0) / 100);
+  const ending = STABILITY.ending[reason] ?? STABILITY.ending.idle;
+
+  const s =
+    w.dur * dur +
+    w.escape * escapeTerm +
+    w.return * returnTerm +
+    w.completion * completion +
+    w.ending * ending;
+  return Math.round(clamp01(s) * 1000) / 1000;
 }
 
 /**

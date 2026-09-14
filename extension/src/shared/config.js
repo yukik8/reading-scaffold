@@ -148,6 +148,23 @@ export const SUCCESS = {
   maxEscapes: 1,
 };
 
+// 読書安定度 S ∈ [0,1](architecture-v1.md §4)。二値successの粗さ(20分読んで1回逸れた人と
+// 5分ぎりぎりの人が同じ「成功」)を連続値に格上げする。
+// v0.14: 並走計測のみ。sessions.stability に保存して二値と一致率を見る。制御には繋がない。
+// 不変条件: 入力は行動シグナルだけ。ヒント数・演出数・クイズ正誤・問いの数・目標達成・
+// 連続日数などエンゲージメント/理解の指標は入れない(自己目的化回路を作らない)。
+export const STABILITY = {
+  weights: { dur: 0.4, escape: 0.25, return: 0.15, completion: 0.1, ending: 0.1 },
+  durFullMin: 20, // この分数で読書時間の項が満点
+  escapeFullCount: 3, // この回数の離脱で離脱項が0
+  awayFullMs: 3 * 60_000, // 累計でこれだけ離れていたら離脱項が0
+  quickReturnMs: 60_000, // これ以内の復帰を「すぐ戻った」と数える
+  ending: { manual: 1, close: 0.7, idle: 0.3 },
+  // 制御接続時の閾値(並走中は未使用): S≥successAtで成功、S≤failAtで失敗、間は据え置き
+  successAt: 0.7,
+  failAt: 0.3,
+};
+
 // 週次目標(評価レイヤーのKPI)。ユーザーが自分で選ぶ。段階が上がると評価だけが厳しくなる。
 // 制御器はこれを一切読まない(目標を制御に入れない — 不変条件)。SUCCESSの定義も動かさない。
 // 達成率はダッシュボードにのみ事実として表示する(popupのMirrorには出さない — 責めない原則)。

@@ -1,6 +1,7 @@
 // ライブラリ(読書メモリの一覧)。記録層だけを読む。
 // これは「記録」カテゴリの表示: 事実の蓄積のみで、可変報酬・比較・警告は載せない。
 
+import { STABILITY } from '../shared/config.js';
 import {
   getAllPages,
   getAllQuestions,
@@ -94,6 +95,34 @@ export async function buildThetaHistory() {
   return [...byDay.values()]
     .sort((a, b) => a.t - b.t)
     .map((b) => ({ t: b.t, theta: b.sum / b.n }));
+}
+
+/**
+ * 読書安定度 S の並走レポート(ダッシュボードdev用)。
+ * 二値 success と S を並べ、閾値を決めるための材料を出す。制御には使わない。
+ */
+export async function buildStabilityReport() {
+  const rows = (await getAllSessions()).filter((s) => typeof s.stability === 'number');
+  const n = rows.length;
+  if (n === 0) return { n: 0 };
+  const succ = rows.filter((s) => s.success);
+  const fail = rows.filter((s) => !s.success);
+  const mean = (xs) => (xs.length ? xs.reduce((a, s) => a + s.stability, 0) / xs.length : null);
+  const hi = STABILITY.successAt;
+  const lo = STABILITY.failAt;
+  // 一致: 成功↔S≥hi、失敗↔S≤lo。中間帯(据え置き)は不一致に数えない
+  const decided = rows.filter((s) => s.stability >= hi || s.stability <= lo);
+  const agree = decided.filter((s) => (s.success ? s.stability >= hi : s.stability <= lo));
+  return {
+    n,
+    mean_success: mean(succ),
+    mean_fail: mean(fail),
+    n_success: succ.length,
+    n_fail: fail.length,
+    n_mid: rows.filter((s) => s.stability > lo && s.stability < hi).length,
+    agreement: decided.length ? agree.length / decided.length : null,
+    n_decided: decided.length,
+  };
 }
 
 /** 累計(ダッシュボード用)。 */
