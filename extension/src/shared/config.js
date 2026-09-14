@@ -177,6 +177,17 @@ export const GOALS = {
 };
 export const DEFAULT_GOAL = 'level1';
 
+// 合格ライン(2026-09-14確定・architecture-v1.md §10)。「達成率を保ったままθが下がる」の
+// 「保つ」を数値化したもの。評価レイヤー専用 — 制御器は読まない。
+export const PASS = {
+  achievementFloor: 0.8, // 週次達成率がこれ以上を「保った」と数える
+  weeksRequired: 3, // 直近weeksWindow週のうちこれだけ保てば維持
+  weeksWindow: 4,
+  graduateWithinWeeks: 12, // 開始からこの週数以内に θ=0
+  quizDropMaxPt: 10, // クイズ正答率が全期間平均よりこれ以上落ちたら理解の劣化
+  // 卒業後の維持(50%割れで再展開)は CONTROLLER.homeostatDropRatio が担う
+};
+
 // 初回診断(オンボーディング)。4問×0〜2点の合計(0=軽い〜8=重い)を初期θに写す。
 // スコア・θを本人に見せない(「中毒度」のラベリングをしない — PRD「診断と目標設定」)。
 // 診断は内部でθの初期値としてだけ働き、以後のθは制御器だけが動かす。

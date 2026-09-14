@@ -3,7 +3,7 @@
 // θ変更と全消去だけはSW経由(進行中セッションへの反映・後片付けがSWの仕事なので)。
 
 import { Msg } from '../shared/events.js';
-import { THETA_MAX, GOALS, readDemoFlag, writeDemoFlag } from '../shared/config.js';
+import { THETA_MAX, GOALS, PASS, readDemoFlag, writeDemoFlag } from '../shared/config.js';
 import { seedDemoData } from './demo-seed.js';
 import { buildMirror } from '../background/mirror.js';
 import { buildKpi } from '../background/kpi.js';
@@ -130,6 +130,16 @@ function drawKpi(kpi) {
     svg.append(line);
   }
 
+  // 合格ライン(達成率80%)。事実として引くだけで、下回っても色は変えない(責めない)
+  const passY = bottom - PASS.achievementFloor * (bottom - top);
+  const passLine = document.createElementNS(ns, 'line');
+  passLine.setAttribute('x1', padX);
+  passLine.setAttribute('x2', W - padX);
+  passLine.setAttribute('y1', passY);
+  passLine.setAttribute('y2', passY);
+  passLine.setAttribute('class', 'kpi-pass');
+  svg.append(passLine);
+
   // 達成率の棒
   kpi.weeks.forEach((w, i) => {
     if (w.sessions === 0) return;
@@ -193,6 +203,11 @@ function drawKpi(kpi) {
   add(`${thisWeek.streak_median_min}分`, true);
   add(' · 補助なし ');
   add(`${thisWeek.unassisted_min}分`, true);
+  // 合格ラインの維持: 直近4週のうち達成率80%以上だった週数(目標は3週)
+  const recent = kpi.weeks.slice(-PASS.weeksWindow);
+  const kept = recent.filter((w) => w.achievement >= PASS.achievementFloor).length;
+  add(` · 直近${PASS.weeksWindow}週で${Math.round(PASS.achievementFloor * 100)}%以上 `);
+  add(`${kept}週`, true);
   if (kpi.quiz.week.total > 0) {
     add(' · クイズ ');
     add(`${kpi.quiz.week.correct}/${kpi.quiz.week.total}`, true);
