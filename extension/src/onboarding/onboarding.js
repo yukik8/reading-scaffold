@@ -110,14 +110,24 @@ $('back').addEventListener('click', () => {
 
 $('finish').addEventListener('click', async () => {
   $('finish').disabled = true;
-  const res = await chrome.runtime.sendMessage({
-    type: Msg.COMPLETE_ONBOARDING,
-    answers,
-    goal: selectedGoal,
-  });
+  $('finish-error').hidden = true;
+  let res = null;
+  try {
+    res = await chrome.runtime.sendMessage({
+      type: Msg.COMPLETE_ONBOARDING,
+      answers,
+      goal: selectedGoal,
+    });
+  } catch {
+    /* SW不在など。下で案内する */
+  }
   if (res?.ok) {
     show('step-done');
   } else {
+    // 黙って戻すと「終わった」と誤解して閉じてしまう。失敗は必ず見せる
+    $('finish-error').textContent =
+      `保存できませんでした(${res?.error ?? 'no-response'})。拡張をリロードして、もう一度お試しください。`;
+    $('finish-error').hidden = false;
     $('finish').disabled = false;
   }
 });

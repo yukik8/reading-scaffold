@@ -17,6 +17,13 @@
   box-sizing: border-box;
 }
 
+/* hidden属性を display:grid 等の指定より必ず優先させる。
+   これが無いと #onboard / #controls の display:grid が hidden に勝ち、
+   「はじめる」が完了後も消えない(v0.14.2で修正) */
+[hidden] {
+  display: none !important;
+}
+
 body {
   margin: 0;
   width: 344px;
