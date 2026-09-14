@@ -39,53 +39,82 @@ ChatGPTの助言にあった「注意支援A / 理解支援C / 報酬R / 記憶M
 
 ## 2. システム構成(実行時の層)
 
+```mermaid
+flowchart TB
+  user(["利用者"])
+
+  subgraph ui["拡張ページ（UI）"]
+    popup["popup<br/>読む / 終える・未設定なら誘導"]
+    onboarding["onboarding<br/>診断→θ prior・目標"]
+    dashboard["dashboard<br/>帯・達成率×θ・書架・データ管理"]
+  end
+
+  subgraph content["読書タブ（content script・セッション中のみ注入）"]
+    loader["loader.js<br/>版キー付きガード"]
+    main["main.js<br/>本文検出・計測<br/>θ駆動の演出計画・クイズ・問いFAB"]
+    overlay["overlay.js<br/>Shadow DOM: 星・カード・予告・雨"]
+  end
+
+  subgraph sw["Service Worker（MV3・常駐）"]
+    router["service-worker.js<br/>ルータ・常設リスナー・onInstalled"]
+    session["session.js<br/>状態機械・離脱観測・watchdog"]
+    controller["controller.js<br/>θ漸減・ホメオスタット・S"]
+    store[("store.js<br/>IndexedDB v3<br/>計測層 / 制御層 / 記録層")]
+    agg["mirror / kpi / library<br/>集計"]
+    ai["ai.js<br/>生成の中継"]
+  end
+
+  subgraph gen["生成基盤"]
+    nano["Gemini Nano<br/>端末内で完結・無料"]
+    server["server/main.py → Anthropic<br/>フォールバック・本文送信は同意"]
+  end
+
+  user --> popup
+  user --> onboarding
+  user --> dashboard
+  popup -- "START / END_SESSION" --> router
+  onboarding -- "COMPLETE_ONBOARDING" --> router
+  router -- "注入" --> loader --> main --> overlay
+  main -- "REPORT / QUIZ_REQUEST / ASK_REQUEST" --> router
+  router --> session --> controller --> store
+  session --> store
+  router --> ai
+  ai -- "第一候補" --> nano
+  ai -- "使えなければ" --> server
+  store --> agg --> dashboard
+
+  style nano fill:#e1f5ee,stroke:#0f6e56,color:#04342c
+  style server fill:#faece7,stroke:#993c1d,color:#4a1b0c,stroke-dasharray:5 5
 ```
-利用者
-  │  「読む」/ 診断・目標 / ダッシュボード
-  ▼
-┌─ 拡張ページ(UI) ──────────────────────────────────────────┐
-│  popup(読む/終える・未設定なら誘導)  onboarding(診断→θ prior・目標)   │
-│  dashboard(帯・達成率×θ・書架・クイズ・問い・データ管理・dev)          │
-└───────────────┬──────────────────────────────┬───────────┘
-                │ START/END_SESSION 等          │ store を直読み(集計)
-                ▼                              │
-┌─ 読書タブ(content script・セッション中のみ注入) ─┐        │
-│  loader.js  版キー付きガード → main.js を ?t= で読込   │        │
-│  main.js    本文検出 / 可視段落 / 操作・dwell計測      │        │
-│             θ駆動のヒント計画(事前ロール) / 先触れ / 天井│        │
-│             クイズ(normal枠のみ) / 問いFAB / 地の星      │        │
-│  overlay.js Shadow DOM: 星(銀/金/虹)・カード・予告・雨   │        │
-└───────────────┬──────────────────────────────┘        │
-                │ REPORT(計測イベント) / QUIZ_REQUEST / ASK_REQUEST │
-                ▼                                              │
-┌─ Service Worker(MV3・常駐) ─────────────────────────────────┐
-│  service-worker.js  メッセージルータ・常設リスナー・onInstalled   │
-│  session.js         セッション状態機械 / 離脱観測 / watchdog       │
-│  controller.js      タペリング制御器(θ) / ホメオスタット           │
-│  store.js           IndexedDB v3(計測層/制御層/記録層)             │
-│  mirror.js kpi.js library.js  集計(補助なし時間・達成率×θ・書架)   │
-│  ai.js              生成の中継(Nano → サーバ)                       │
-└───────────────┬────────────────────────────────────────────┘
-                │ クイズ・問いの生成
-                ▼
-┌─ 生成基盤 ─────────────────────────────────────────────────┐
-│  Gemini Nano(Prompt API)  端末内で完結・無料 ← 第一候補           │
-│  server/main.py(FastAPI)  → Anthropic API   ← フォールバック(同意) │
-└────────────────────────────────────────────────────────────┘
-```
+
+緑＝端末内で完結、橙の点線＝端末の外へ出る経路(本文送信・同意)。`store → 集計 → dashboard` の戻りが、UI が最下層を読む輪になっている。
 
 ### 論理パイプライン(何が何を決めるか)
 
+```mermaid
+flowchart LR
+  sensor["Sensor<br/>計測イベント<br/>dwell・離脱・読了率"]
+  engine["Session Engine<br/>状態機械<br/>1セッションに集約"]
+  state["User State<br/>θ（足場の量）<br/>S（安定度）"]
+  policy["Policy<br/>制御器<br/>θ漸減・演出パラメータ"]
+  stim["演出<br/>θ配下<br/>卒業で消える"]
+  record["記録<br/>読書メモリ<br/>永続"]
+  tool["道具<br/>問い<br/>永続"]
+
+  sensor --> engine --> state --> policy --> stim
+  engine -. "非制御（θを読まない・書かない）" .-> record
+  engine -. "非制御" .-> tool
+
+  style stim fill:#eeedfe,stroke:#534ab7,color:#26215c
+  style record fill:#f1efe8,stroke:#5f5e5a,color:#2c2c2a
+  style tool fill:#f1efe8,stroke:#5f5e5a,color:#2c2c2a
 ```
-Sensor(content) ─→ Session Engine(SW) ─→ User State ─→ Policy ─→ 演出(θ配下)
-   計測イベント        状態機械・集約        θ, S        制御器      先触れ/天井/レア度
-                                              │
-                                              └──── 記録(非制御) / 道具(非制御)
-```
+
+紫の実線の列だけが制御ループ。記録と道具は点線で外に出ている＝θ が減っても消えない。
 
 - **Sensor** は「読んでいる」を操作的に定義して鼓動(dwell tick)を打つ
 - **Session Engine** は鼓動と離脱を1セッションに集約し、終了時に成否を出す
-- **User State** は θ(足場の量・連続値)と、(計画)S(読書安定度)。診断は θ の事前分布を置くだけ
+- **User State** は θ(足場の量・連続値)と S(読書安定度・v0.14から並走計測)。診断は θ の事前分布を置くだけ
 - **Policy** は θ の漸減と、θ からの演出パラメータ(頻度・レア度・先触れ・天井)の導出
 - 記録と道具はこのループの外にいる(θ を読まないし、θ に書かない)
 
