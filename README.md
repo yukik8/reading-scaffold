@@ -7,8 +7,8 @@
 減り続けなければ機構の失敗と判定する(KPIの経緯と根拠: [docs/research/benchmark.md](docs/research/benchmark.md) §5)。
 「補助なし読書時間」は卒業段階の確認指標。
 
-- 設計: [docs/design-doc-v0.md](docs/design-doc-v0.md)
-- ステータス: v0 / W1(計測)・W2(演出+LLMクイズ)・W3(連続θの自動漸減+ホメオスタット)・W4の一部(オンボーディング=診断→初期θ+目標選択)実装済み — ドッグフーディング中
+- 設計(唯一の一次資料): [docs/architecture-v1.md](docs/architecture-v1.md) — 三分法(演出/記録/道具)・θ一本の漸減・不変条件・移行計画。旧 v0 設計は [docs/archive/](docs/archive/)
+- ステータス: v0.13 / 計測・演出v2(色の語彙/先触れ/天井)・連続θの自動漸減+ホメオスタット・オンボーディング(診断→θ prior+目標)・自分からの問い・Nano/サーバ生成・KPI(達成率×θ)実装済み — ドッグフーディング中
 
 ## 原則(コードで守るもの)
 

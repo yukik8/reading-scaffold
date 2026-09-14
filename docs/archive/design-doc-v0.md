@@ -1,7 +1,11 @@
 # Design Doc: ドーパミン補助輪付き読書拡張 v0
 
+> **ARCHIVED(2026-09-14)。** 本書は歴史資料。現行の設計は [../architecture-v1.md](../architecture-v1.md) が唯一の一次資料。
+> 本書には実装と食い違う旧世界観が残っている: 離散 Level(state・診断・Mirror・「Level 4以上」)、
+> tabs リスナーの開始時登録/終了時解除。いずれもコードでは廃止済み(連続θ・常設リスナー+ガード)。
+
 - **Author:** 祐希
-- **Status:** Draft(2026-08-16)
+- **Status:** Archived(原 Draft 2026-08-16)
 - **Audience:** 実装者(本人+AI)
 - **Context:** PRDのMVP(v0)の実装方針。製品の Why/What はPRDに委ね、本書は How のみを扱う。PRDとプロジェクト全体の文脈は本リポジトリ外(手元の `cognitive-exoskelton/`)にある。
 
