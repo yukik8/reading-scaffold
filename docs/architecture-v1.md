@@ -376,3 +376,414 @@ QUIZ_REQUEST / ASK_REQUEST
 3. Nano 不可の端末が多数なら、問いをサーバ主(同意)にするか Nano 必須(非対応は隠す)にするか(ask-and-nano-design.md §6)
 4. Kindle/DRM 付き書籍への到達(PRD Open Question #1)。v1 は Web 記事のみ
 5. 週次派生指標の項目と匿名化(何を送り、何を送らないか)
+
+---
+
+## 付録 A: シーケンス図
+
+§2 の構成図が「何がどこにあるか」なら、この付録は「どの順で何が起きるか」。v0.14.2 の実装から起こし、関数名・メッセージ名はコードのまま書いた。実線 `->>` は呼び出し/送信、点線 `-->>` は戻り値/応答。`SS` は `chrome.storage.session`(セッションの現在値)、`DB` は IndexedDB(store.js)。
+
+| # | 流れ | 起点 | 主なファイル |
+|---|---|---|---|
+| 1 | [セッション開始](#a1-セッション開始) | popup「読む」 | popup.js → session.js → loader.js → main.js |
+| 2 | [読書中の計測](#a2-読書中の計測鼓動と演出の報告) | 20秒の鼓動・スクロール | main.js → session.js `onReport` |
+| 3 | [離脱と復帰](#a3-離脱と復帰) | タブ切替・フォーカス移動 | service-worker.js(常設リスナー)→ session.js |
+| 4 | [セッション終了](#a4-セッション終了と制御器) | 終える / close / 無操作3分 | session.js `endSession` → controller.js |
+| 5 | [クイズ](#a5-クイズ生成と回答) | normal 枠の30% | main.js → ai.js / server → overlay.js |
+| 6 | [問い](#a6-問い道具) | 本人が FAB から | overlay.js → service-worker.js → ai.js / server |
+| 7 | [オンボーディング](#a7-オンボーディングと-recalibrate) | インストール / 診断をやり直す | onboarding.js → service-worker.js |
+| 8 | [ダッシュボード](#a8-ダッシュボード) | 本人が開く | dashboard.js |
+
+### A1. セッション開始
+
+```mermaid
+sequenceDiagram
+  autonumber
+  actor U as 利用者
+  participant P as popup
+  participant SW as service-worker.js
+  participant SE as session.js
+  participant SS as storage.session
+  participant DB as IndexedDB
+  participant L as loader.js
+  participant M as main.js
+  participant O as overlay.js
+
+  U->>P: 「読む」をクリック(ジェスチャーで activeTab が付く)
+  P->>SW: START_SESSION {tabId}
+  SW->>SE: startSession(tabId)
+  opt 既存セッションあり
+    SE->>SE: endSession('manual')
+  end
+  SE->>SE: tabs.get → URL を検査
+  break http/https 以外(chrome:// 等)
+    SE-->>SW: throw
+    SW-->>P: {ok: false, error}
+    P->>U: エラー表示
+  end
+  SE->>DB: getState() → θ_base
+  SE->>SE: 実効θ = θ_base × (1 ± 0.1 の乱数)
+  SE->>SS: setCurrent(session) — ACTIVE
+  SE->>DB: events += session_start / pages を upsert
+  SE->>L: scripting.executeScript(loader.js)
+  Note over SE,L: 注入はセッション保存の後。先に注入すると<br/>GET_STATUS が未保存を読んで θ=0 になる
+  L->>L: 版キーで二重注入を止める
+  L-)M: import(main.js?t=…)
+  SE->>SE: alarms.create(watchdog・30秒ごと) / バッジ ●
+  SE-->>SW: session
+  SW-->>P: {ok: true, session}
+  P->>P: window.close()
+
+  M->>M: 本文検出(20語以上の p × 3段落・200語以上 → full、未満 → measure-only)
+  M->>SW: REPORT content_ready {語数, mode, lang}
+  SW->>SE: onReport → pages に語数・言語
+  loop セッションが見えるまで(最大6回・250ms 間隔)
+    M->>SW: GET_STATUS
+    SW-->>M: {session, state}
+  end
+  M->>M: θ = session.theta → planHints()(θ × 語数 / 1000 枠、レア度は事前ロール)
+  M->>O: showNotice(計測をはじめました · θ=… · v…)
+```
+
+- 注入に失敗した場合も `setCurrent(null)` でセッションを消してから throw し、同じ `break` の経路で popup にエラーが出る
+- `L-)M` は非同期(loader は import を投げて終わる)。main.js の起動は popup が閉じた後になりうる。だから GET_STATUS を再試行する
+
+### A2. 読書中の計測(鼓動と演出の報告)
+
+```mermaid
+sequenceDiagram
+  actor U as 利用者
+  participant M as main.js
+  participant O as overlay.js
+  participant SW as service-worker.js
+  participant SE as session.js
+  participant SS as storage.session
+  participant DB as IndexedDB
+
+  U->>M: scroll / wheel / keydown / pointerdown
+  M->>M: markInteraction()
+  opt scroll かつ前回報告から5秒以上(間引き)
+    M->>SW: REPORT scroll {depth_pct, completion_pct}
+    SW->>SE: onReport → completion_pct = max(…)
+  end
+
+  loop 20秒ごと(dwellTimer)
+    alt タブ表示中 かつ isReading()(段落が可視 かつ 30秒以内に操作)
+      M->>SW: REPORT dwell_tick {可視段落の範囲}
+      SW->>SE: onReport(送信元がセッションのタブか確認)
+      SE->>SE: ACTIVE のときだけ read_ms += 20秒 / 最長連続を更新
+      SE->>DB: events += dwell_tick
+      SE->>SS: setCurrent(session)
+      M->>M: 副経路のヒント / 先触れの保証(約1分) / 天井
+    else 読んでいない
+      M->>M: 何も送らない
+    end
+  end
+
+  Note over M,O: 主経路: 印をつけた段落が初めて可視になった瞬間に showHint
+  alt normal
+    M->>O: showHint(銀)
+  else rare / epic(先触れ済み)
+    M->>O: showHint(quiet) + foreshadow(epic は二度瞬き)
+    M->>O: 約1秒後に rain(金 / 虹)
+    M->>SW: REPORT effect_shown
+  end
+  M->>SW: REPORT hint_shown
+  SW->>SE: onReport → hints_shown / effects_shown を加算
+  SE->>DB: events に追記
+```
+
+- 本文も URL も送らない。送るのは計測値だけ(可視段落の index 範囲・%・回数)
+- 地の星(1.5秒ごとの `glint`)は content 内で完結し、SW には報告しない
+- normal 枠の30%はクイズに化ける → [A5](#a5-クイズ生成と回答)
+
+### A3. 離脱と復帰
+
+```mermaid
+sequenceDiagram
+  actor U as 利用者
+  participant C as Chrome(tabs / windows)
+  participant SW as service-worker.js
+  participant SE as session.js
+  participant SS as storage.session
+  participant DB as IndexedDB
+
+  U->>C: 別タブへ切替 / 別アプリへ
+  C->>SW: tabs.onActivated / windows.onFocusChanged
+  SW->>SE: onTabActivated / onWindowFocusChanged
+  SE->>SS: getCurrent()
+  alt セッションなし
+    SE-->>SW: 何も読まず何も書かずに戻る
+  else ACTIVE
+    SE->>C: tabs.get(行き先タブ)
+    C-->>SE: URL → ホスト名だけ取り出す
+    SE->>DB: events += tab_escape {to_domain}
+    SE->>SS: ESCAPED / escapes++ / 連続区間を切る
+  end
+  Note over SE: 離脱ではセッションを終えない(離脱→復帰が制御の主要シグナル)
+
+  U->>C: 読書タブへ戻る
+  C->>SW: tabs.onActivated / windows.onFocusChanged
+  SW->>SE: onTabActivated / onWindowFocusChanged
+  SE->>DB: events += tab_return {away_ms}
+  SE->>SS: ACTIVE / away_total_ms 加算 / 60秒以内なら quick_returns++
+```
+
+- リスナーは service-worker.js のトップレベルに常設(MV3 の再起動要件)。「計測はセッション中のみ」は、全ハンドラの先頭のセッション確認で守る
+- 全ウィンドウが非フォーカス(`WINDOW_ID_NONE`)= OS の別アプリへの離脱。行き先は `null`
+- 戻らないまま3分たつと watchdog が終了させる → [A4](#a4-セッション終了と制御器)
+
+### A4. セッション終了と制御器
+
+```mermaid
+sequenceDiagram
+  autonumber
+  actor U as 利用者
+  participant P as popup
+  participant C as Chrome(tabs / alarms)
+  participant SW as service-worker.js
+  participant SE as session.js
+  participant CT as controller.js
+  participant SS as storage.session
+  participant DB as IndexedDB
+  participant M as main.js
+  participant O as overlay.js
+
+  alt 手動
+    U->>P: 「終える」
+    P->>SW: END_SESSION {reason: manual}
+    SW->>SE: endSession('manual')
+  else タブを閉じた / 別ページへ遷移(ハッシュだけの変化は除く)
+    C->>SW: tabs.onRemoved / tabs.onUpdated
+    SW->>SE: endSession('close')
+  else 無操作 / 未復帰が3分
+    C->>SW: alarms.onAlarm(watchdog・30秒ごと)
+    SW->>SE: onWatchdog() → last_event_at から3分超
+    SE->>SE: endSession('idle')
+  end
+
+  SE->>C: alarm 解除 / バッジ消去
+  SE->>SE: success = read_ms ≥ 5分 かつ escapes ≤ 1
+  SE->>CT: stabilityScore(session, reason)
+  CT-->>SE: S(並走計測・制御には未接続)
+  SE->>SE: celebrate = (success または デモ) かつ θ > 0
+  SE->>DB: events += effect_shown(celebrate 時) / session_end
+  SE->>DB: sessions += 1行(success, stability, reason, …)
+  SE->>DB: pages に累計(read_count, total_read_ms, best_completion_pct)
+
+  SE->>DB: getState()
+  alt ホメオスタット再展開中
+    SE->>SE: θ は据え置き
+  else 通常
+    SE->>CT: nextState(state, session, today)
+    CT-->>SE: 成功 θ×0.9 / 2連続失敗 θ×1.3 / 日次±15% / θ<0.3 → 0
+    opt このセッションで卒業(θ>0 → 0)
+      SE->>DB: getAllSessions() → 補助なし読書時間の4週平均をベースラインに
+    end
+  end
+  opt θ = 0 または 再展開中
+    SE->>CT: applyHomeostat(next, 4週平均)
+    CT-->>SE: 50%割れ → θ=1.5 / 80%まで回復 → θ=0
+  end
+  SE->>DB: events += theta_update(θ が変わったとき) / putState
+  Note over SE,CT: θ の変化は本人に通知しない
+
+  SE-)M: tabs.sendMessage rs_stop {celebrate, read_min}
+  M->>M: タイマー・observer・リスナーを解除
+  alt celebrate
+    M->>O: celebrate(読んだ分) → 数秒後に destroy
+  else
+    M->>O: destroy()
+  end
+  SE->>SS: setCurrent(null)
+  SE-->>SW: 終了したセッション
+  SW-->>P: {ok: true, session}(手動のときだけ応答先がある)
+```
+
+- 制御器の入力は `session` の行動シグナルだけ(§11-3)。クイズ正誤・問いの数・目標は渡らない
+- タブが既に閉じていれば `rs_stop` の送信は失敗し、それで終わる(握りつぶす)
+- 記録・制御の失敗は try/catch で握り、終了処理を止めない
+
+### A5. クイズ(生成と回答)
+
+```mermaid
+sequenceDiagram
+  actor U as 利用者
+  participant M as main.js
+  participant O as overlay.js
+  participant SW as service-worker.js
+  participant AI as ai.js(Gemini Nano)
+  participant SV as server/main.py
+  participant AN as Anthropic API
+  participant DB as IndexedDB
+
+  M->>M: showHint(normal 枠) → 30%でクイズに化ける(1セッション1問・読了3段落以上)
+  M->>M: 素材 = 直近4段落のうち最長(読了済みのみ)
+  M->>SW: QUIZ_REQUEST {paragraph_text}
+  SW->>AI: nanoQuiz(text)
+  alt Nano が available
+    AI-->>SW: quiz(JSON Schema で出力を強制)
+  else 使えない(downloadable なら裏で DL を一度だけ起こす)
+    AI-->>SW: null
+    SW->>SV: POST /quiz(12秒でタイムアウト)
+    SV->>AN: messages.create(1段落)
+    AN-->>SV: 問題
+    SV-->>SW: {ok, quiz}
+  end
+  opt 生成できた
+    SW->>DB: quizzes に保存(段落の sha256 で重複排除)
+  end
+  SW-->>M: {ok, quiz, quiz_id, source} または {ok: false}
+
+  alt 失敗 / 生成中に読むのをやめた
+    M->>M: 静かに諦める(読書を止めない)
+  else 出題
+    M->>SW: REPORT hint_shown {kind: quiz}
+    M->>O: showQuiz(出題元の段落を光の枠で指す)
+    U->>O: 選択肢を選ぶ
+    O->>O: 正解なら θ 連動の演出(θ≥5 大当たり / θ≥3 金の雨 / 未満 星二波)
+    O->>M: onAnswer(correct, chosen_index, latency_ms)
+    M->>SW: REPORT quiz_answered
+    SW->>DB: events += quiz_answered / quiz_attempts += 回答
+    opt 正解 かつ θ ≥ 3
+      M->>SW: REPORT effect_shown
+    end
+  end
+```
+
+- 未読段落は素材にしない(ネタバレ禁止)
+- サーバ経路は本文が端末の外へ出る唯一のクイズ経路。サーバは保存もログもしない。βでは同意が前提(§9)
+- クイズ正誤は制御器に入らない。KPI の理解ガードレールにだけ使う
+
+### A6. 問い(道具)
+
+```mermaid
+sequenceDiagram
+  actor U as 利用者
+  participant O as overlay.js(FAB)
+  participant M as main.js
+  participant SW as service-worker.js
+  participant AI as ai.js(Gemini Nano)
+  participant SV as server/main.py
+  participant AN as Anthropic API
+  participant DB as IndexedDB
+
+  U->>O: FAB をクリック → 質問を入力
+  O->>M: onAsk(question)
+  M->>M: markInteraction()(Q&A 中に放置終了させない)
+  M->>M: 文脈 = 読了済みの直近6段落 + 選択範囲(未読は渡さない)
+  M->>SW: ASK_REQUEST {question, selection, context}
+  SW->>SW: セッション確認・長さの切り詰め
+  SW->>AI: nanoAnswer(…)
+  alt Nano が available
+    AI-->>SW: {answer, source_index}
+  else 使えない
+    AI-->>SW: null
+    SW->>SV: POST /ask(25秒でタイムアウト)
+    SV->>AN: messages.create(質問 + 読了済み段落)
+    AN-->>SV: 回答
+    SV-->>SW: {ok, answer, source_index}
+  end
+
+  alt どちらも使えない
+    SW-->>M: {ok: false, error: unavailable}
+    M->>O: showNotice(呼び出せなかった事実だけ)
+  else 回答あり
+    SW->>DB: events += question_asked {chars}(文字数のみ)
+    SW->>DB: questions += 問いと答えの本文
+    SW-->>M: {ok: true, answer, source_index}
+    M->>O: showAnswer(根拠段落を光の枠で指す)
+  end
+```
+
+- 回答に演出はつけない。1問1答で会話は続かない
+- 層の分離: 計測層(`events`)には文字数だけ、本文は記録層(`questions`)だけ
+- 制御器には入れない。ダッシュボードの累計に事実として出るだけ
+
+### A7. オンボーディングと Recalibrate
+
+```mermaid
+sequenceDiagram
+  actor U as 利用者
+  participant C as Chrome
+  participant SW as service-worker.js
+  participant D as dashboard
+  participant OB as onboarding
+  participant DB as IndexedDB
+  participant P as popup
+
+  alt 新規インストール
+    C->>SW: runtime.onInstalled(reason = install)
+    SW->>C: tabs.create(onboarding.html)
+  else Recalibrate
+    U->>D: 「診断をやり直す」
+    D->>C: tabs.create(onboarding.html)
+  end
+  C->>OB: 開く
+  U->>OB: 導入 → 4問診断(各0〜2点) → 目標を選ぶ(おすすめを事前選択)
+  OB->>SW: COMPLETE_ONBOARDING {answers, goal}
+  SW->>DB: getState() / getAllSessions()
+  alt セッション実績ゼロ かつ 未完了
+    SW->>SW: θ = thetaByScore[合計点](事前分布を置く)
+  else それ以外(Recalibrate を含む)
+    SW->>SW: θ は触らない
+  end
+  SW->>DB: putState(diag_answers, goal, onboarded_at)
+  SW-->>OB: {ok: true, theta_applied}
+  OB->>U: 完了画面
+
+  Note over P,SW: 以後
+  U->>P: 拡張アイコン
+  P->>SW: GET_STATUS
+  SW-->>P: {session, state}
+  alt onboarded_at なし かつ セッションなし
+    P->>U: 設定への誘導だけ
+  else
+    P->>SW: GET_MIRROR / GET_LIBRARY
+    SW-->>P: 週次の帯・書架
+    P->>U: 読む / 終える + 今週の集計
+  end
+```
+
+- 診断結果を「中毒度スコア」として見せない。θ を動かすのは以後、制御器だけ
+
+### A8. ダッシュボード
+
+```mermaid
+sequenceDiagram
+  actor U as 利用者
+  participant D as dashboard.js
+  participant AGG as mirror / kpi / library
+  participant DB as IndexedDB
+  participant SW as service-worker.js
+  participant SE as session.js
+  participant M as main.js
+
+  U->>D: 開く
+  D->>AGG: buildKpi / buildMirror / buildLibrary / buildThetaHistory …
+  AGG->>DB: getAll*(同じ IndexedDB を拡張ページから直接読む)
+  DB-->>AGG: 記録
+  AGG-->>D: 集計
+  D->>U: 帯・達成率×θ・書架・クイズ履歴・累計
+
+  opt θ を手動で上書き(ドッグフーディング用)
+    U->>D: スライダー
+    D->>SW: SET_THETA {theta}
+    SW->>SE: setTheta(θ) → state と day_start_theta を上書き
+    opt 進行中のセッションあり
+      SE-)M: rs_theta {theta}
+      M->>M: planHints() をやり直す(即時反映)
+    end
+    SW-->>D: {ok, theta}
+  end
+  opt 目標を変える
+    D->>SW: SET_GOAL {goal}(評価レイヤーだけ。制御器は読まない)
+  end
+  opt 全消去(二重確認)
+    D->>SW: WIPE_ALL
+    SW->>SE: endSession('manual')
+    SW->>DB: wipeAll()(7ストア + storage.session / local)
+  end
+```
+
+- 読み取りは直接、書き込みは SW 経由。state への書き込みを SW に揃えて制御器との競合を避ける
