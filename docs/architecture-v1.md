@@ -59,7 +59,7 @@ flowchart TB
     router["service-worker.js<br/>ルータ・常設リスナー・onInstalled"]
     session["session.js<br/>状態機械・離脱観測・watchdog"]
     controller["controller.js<br/>θ漸減・ホメオスタット・S"]
-    store[("store.js<br/>IndexedDB v3<br/>計測層 / 制御層 / 記録層")]
+    store[("store.js<br/>IndexedDB v4<br/>計測層 / 制御層 / 記録層")]
     agg["mirror / kpi / library<br/>集計"]
     ai["ai.js<br/>生成の中継"]
   end
@@ -237,9 +237,11 @@ ending     = manual:1 / close:0.7 / idle:0.3
 
 ### 現物
 
-`pages`(読んだもの) / `quizzes` + `quiz_attempts`(出題と回答) / `questions`(問いと答え)。ローカルのみ、サーバへは1バイトも出ない。ダッシュボードの書架・クイズ履歴・累計がこれを読む。可変報酬なし・要求なし。
+`pages`(読んだもの。Play ブックスは1冊=1行) / `readings`(読んだ区間・v0.19) / `quizzes` + `quiz_attempts`(出題と回答) / `questions`(問いと答え・選んでいた箇所)。ローカルのみ、サーバへは1バイトも出ない。ダッシュボードの書架・クイズ履歴・累計がこれを読む。可変報酬なし・要求なし。
 
-### Phase 2: MemoryItem と想起プロンプト(計画・データモデルは今決める)
+### Phase 2: MemoryItem と想起プロンプト(計画)
+
+> 2026-10-07: データモデルは [data-design.md](data-design.md) v2 §2.4 の `passages` / `marks` / `recalls` に置き換えた(主張は `marks` の claim、再想起は `recalls`)。下の `memory_items` は経緯として残す。作られ方・LLM の役割・θ との関係はそのまま有効。
 
 「読んだものが自分の知識として残る」の実体。原則は **retrieval practice(自分で思い出す) > LLM要約**。LLMが本文を要約して溜めたものは数ヶ月でゴミになる。本人が想起した記憶だけを資産にする。
 
@@ -261,18 +263,19 @@ memory_items(記録層・ローカルのみ)
 
 ---
 
-## 8. データモデル(IndexedDB v3・store.js)
+## 8. データモデル(IndexedDB v4・store.js)
 
 | 層 | ストア | 中身 | URL/本文 | 行き先 |
 |---|---|---|---|---|
 | 計測層 | `events`(append-only) `sessions`(集計キャッシュ) | 鼓動・離脱(ドメインのみ)・ヒント/演出/クイズ/問いの発生 | 持たない | (計画)週次の派生指標のみサーバへ・匿名 |
 | 制御層 | `state`(単一) | θ・streak・診断回答・目標・onboarded_at・homeostat | 持たない | ローカルのみ |
-| 記録層 | `pages` `quizzes` `quiz_attempts` `questions` (計画)`memory_items` | 読書メモリ=本人の資産 | **持つ** | **ローカルのみ** |
+| 記録層 | `pages` `readings` `quizzes` `quiz_attempts` `questions` (計画)`passages` `marks` `recalls` | 読書メモリ=本人の資産 | **持つ** | **ローカルのみ** |
 
 - `sessions` の1行: `{ session_id, date, started_at, domain, page_id, theta, theta_base, read_ms, escapes, completion_pct, success, stability, reason, away_total_ms, quick_returns, hints_shown, effects_shown, longest_streak_ms }`。`stability` が S(v0.14〜・並走計測)
 - `events.type`: session_start / dwell_tick / scroll / tab_escape / tab_return / hint_shown / hint_clicked / effect_shown / quiz_answered / question_asked / session_end / theta_update
 - プロフィール別設定(`chrome.storage.local`): `demo_enabled`(演出の増幅のみ。計測・制御・記録に影響しない・既定OFF)
-- 全消去は1タップで7ストア+storage を空にする(記録層=資産も含む。「計測だけ消す」は将来)
+- `readings` の1行(v0.19・DB v4): `{ session_id, page_id, date, started_at, ended_at, range{from, to, furthest, total}, page_turns, read_ms, reached_end }`。本のページで表した読んだ区間。Play ブックスで位置が読めたセッションだけ。詳細は [data-design.md](data-design.md) §2.2
+- 全消去は1タップで8ストア+storage を空にする(記録層=資産も含む。「計測だけ消す」は将来)
 - エクスポートはJSON(資産なので持ち出せる)
 
 ---
@@ -353,7 +356,7 @@ QUIZ_REQUEST / ASK_REQUEST
 | **keep** | loader.js / session.js の状態機械・離脱観測 / store.js / mirror.js / kpi.js / library.js / ai.js / overlay.js / popup / onboarding / dashboard / server / config・events・time | v1 設計に既に一致。演出v2・問い・Nano・オンボーディング・デモトグルまで含め現物 |
 | **refactor** | controller.js + session.js の success 判定 | 二値 → S(§4)。fading.md の3修正(§5) |
 | **refactor** | data-design.md / reward-design.md | 本書を親にして整合(three分法・MemoryItem を追記) |
-| **add** | `memory_items` ストア(DB v4)+セッション終了時の想起カード | §7。データモデルは v1 で確定、spacing は後 |
+| **add** | `passages` / `marks` / `recalls`(DB v5)+セッション終了時の想起カード | §7・data-design.md §2.4。spacing は後 |
 | **add** | ダッシュボードの Recalibrate | §10 |
 | **add** | 週次派生指標の送信(`/metrics`) | 設計だけ存在し未実装。βまでに |
 | **archive** | design-doc-v0.md → docs/archive/ | Level・登録解除など旧世界観の記述が残っており、実装と食い違う。本書が置き換える |
@@ -364,8 +367,10 @@ QUIZ_REQUEST / ASK_REQUEST
 1. ~~ドキュメントの一本化~~ 済(2026-09-14)
 2. ~~S の並走計測~~ 済(v0.14): `sessions.stability` を保存し、ダッシュボードdev欄に二値との一致率を表示。制御には未接続
 3. S を制御器に接続(§5 の閾値)+ fading.md の3修正。α/β は据え置き — 並走データが2〜3週たまってから
-4. `memory_items`(DB v4)+終了時の想起カード。演出なし・無視可
-5. ~~Recalibrate~~ 済(v0.14) / `/metrics` / βの同意画面
+4. ~~`readings`(読んだ区間)と、問い・クイズの位置と選択の保存~~ 済(v0.19・DB v4)
+5. ~~ダッシュボードの本棚・帯・余白~~ 済(v0.20)
+6. `passages` / `marks` / `recalls`(DB v5)+終了時の想起カード。演出なし・無視可
+7. ~~Recalibrate~~ 済(v0.14) / `/metrics` / βの同意画面
 
 ---
 
@@ -782,7 +787,7 @@ sequenceDiagram
   opt 全消去(二重確認)
     D->>SW: WIPE_ALL
     SW->>SE: endSession('manual')
-    SW->>DB: wipeAll()(7ストア + storage.session / local)
+    SW->>DB: wipeAll()(8ストア + storage.session / local)
   end
 ```
 
