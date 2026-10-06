@@ -5,10 +5,13 @@
 import { Msg } from '../shared/events.js';
 import { THETA_MAX, GOALS, PASS, readDemoFlag, writeDemoFlag } from '../shared/config.js';
 import { seedDemoData } from './demo-seed.js';
+import { bearSVG } from '../content/bear.js';
 import { buildMirror } from '../background/mirror.js';
 import { buildKpi } from '../background/kpi.js';
 import { nanoDiagnostics } from '../background/ai.js';
 import {
+  buildBookshelf,
+  isBookPage,
   buildLibrary,
   buildQuizLog,
   buildTotals,
@@ -23,6 +26,7 @@ import {
   getAllQuizzes,
   getAllQuizAttempts,
   getAllQuestions,
+  getAllReadings,
 } from '../background/store.js';
 
 const $ = (id) => document.getElementById(id);
@@ -48,13 +52,14 @@ function independence(theta) {
   return Math.min(1, Math.max(0, 1 - theta / THETA_MAX));
 }
 
+// 色は演出と同じ水彩の色。edge は帯の内側の光(黒帯だけ金の縁)
 function rankFor(theta) {
-  if (theta === 0) return { name: '黒', color: '#141210', edge: 'rgba(233,187,99,0.6)' };
+  if (theta === 0) return { name: '黒', color: '#4a2f24', edge: '#ffd23f' };
   const i = independence(theta);
-  if (i < 0.25) return { name: '白', color: '#ede6d8', edge: 'rgba(0,0,0,0.3)' };
-  if (i < 0.5) return { name: '黄', color: '#d9b13b', edge: 'rgba(0,0,0,0.25)' };
-  if (i < 0.75) return { name: '緑', color: '#4c7a4f', edge: 'rgba(0,0,0,0.25)' };
-  return { name: '茶', color: '#7a5230', edge: 'rgba(0,0,0,0.25)' };
+  if (i < 0.25) return { name: '白', color: '#fffaf0', edge: 'rgba(255,255,255,0.7)' };
+  if (i < 0.5) return { name: '黄', color: '#ffd23f', edge: 'rgba(255,255,255,0.55)' };
+  if (i < 0.75) return { name: '緑', color: '#4cc9a3', edge: 'rgba(255,255,255,0.45)' };
+  return { name: '茶', color: '#c8864a', edge: 'rgba(255,255,255,0.4)' };
 }
 
 /** 帯セクションの表示をθから更新する(スライダー含む)。 */
@@ -64,7 +69,7 @@ function renderTheta(theta) {
   const rank = rankFor(theta);
   const belt = $('belt');
   belt.style.background = rank.color;
-  belt.style.boxShadow = `inset 0 0 0 1px ${rank.edge}`;
+  belt.style.boxShadow = `inset 0 0 0 2px ${rank.edge}`;
   belt.title = `帯: ${rank.name}`;
   $('indep-pct').textContent = `${Math.round(independence(theta) * 100)}%`;
   $('obi-ring').style.left = `${(theta / THETA_MAX) * 100}%`;
@@ -97,7 +102,7 @@ $('goal').addEventListener('change', async () => {
 });
 
 /**
- * 達成率(棒・左軸0〜100%)とθ(金の線・右軸8〜0)の二軸グラフ。
+ * 達成率(棒・左軸0〜100%)とθ(オレンジの線・右軸8〜0)の二軸グラフ。
  * 「棒が高いままで線が下がる」= 補助に依存せず読めている、が読み取りたい形。
  * 責めない: 未達の棒も色を変えない・警告を出さない。
  */
@@ -217,6 +222,181 @@ function drawKpi(kpi) {
   }
 }
 
+// ---- 本棚 -----------------------------------------------------------------
+
+function el(tag, className, text) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text !== undefined) node.textContent = text;
+  return node;
+}
+
+function durationText(min) {
+  if (min < 60) return `${min}分`;
+  const h = Math.floor(min / 60);
+  return min % 60 ? `${h}時間${min % 60}分` : `${h}時間`;
+}
+
+/** 本の中の位置(ページ境界)を帯の左端からの割合に。 */
+function at(page, total) {
+  return `${(page / total) * 100}%`;
+}
+
+const pageRange = (from, to) => (from === to ? `p.${from}` : `p.${from}–${to}`);
+const attemptMarks = (attempts) => attempts.map((c) => (c ? '○' : '×')).join('');
+
+/** 余白1件の一行説明(帯の点のツールチップ)。 */
+function markLine(m) {
+  if (m.kind === 'question') {
+    return `p.${m.page} 問い: ${m.text}${m.selection ? `\n  「${m.selection}」` : ''}`;
+  }
+  return `p.${m.page} クイズ: ${m.text}${m.attempts.length ? ` ${attemptMarks(m.attempts)}` : ''}`;
+}
+
+/**
+ * 帯: 本の長さを横棒にし、読んだ所を読んだ回数の濃淡で塗る(1回・2回・3回以上)。
+ * 上の2段に問い(輪)とクイズ(点)、横棒の上にしおり(今の位置)。数字はツールチップに任せる。
+ */
+function bookBand(book) {
+  const { total } = book;
+  const band = el('div', 'band');
+  const placed = book.marks.filter((m) => m.page !== null && m.page >= 1 && m.page <= total);
+
+  for (const kind of ['question', 'quiz']) {
+    const groups = new Map();
+    for (const m of placed.filter((x) => x.kind === kind)) {
+      groups.set(m.page, [...(groups.get(m.page) ?? []), m]);
+    }
+    if (groups.size === 0) continue;
+    const lane = el('div', 'band-lane');
+    for (const [page, items] of groups) {
+      const dot = el('span', `band-mark mk-${kind}`);
+      dot.style.left = at(page - 0.5, total); // ページの真ん中
+      dot.title = items.map(markLine).join('\n');
+      lane.append(dot);
+    }
+    band.append(lane);
+  }
+
+  const track = el('div', 'band-track');
+  for (const r of book.runs) {
+    const run = el('span', `band-run band-run-${Math.min(r.count, 3)}`);
+    run.style.left = at(r.from - 1, total);
+    run.style.width = at(r.to - r.from + 1, total);
+    run.title = `${pageRange(r.from, r.to)} · ${r.count}回`;
+    track.append(run);
+  }
+  if (book.position !== null) {
+    const mark = el('span', 'band-bookmark');
+    mark.style.left = at(book.position, total);
+    mark.title = `しおり p.${book.position}`;
+    track.append(mark);
+  }
+  band.append(track);
+
+  const ends = el('div', 'band-ends');
+  ends.append(el('span', null, '1'), el('span', null, `${total}`));
+  band.append(ends);
+
+  const read = book.runs.map((r) => pageRange(r.from, r.to)).join('、');
+  const nq = placed.filter((m) => m.kind === 'question').length;
+  band.setAttribute('role', 'img');
+  band.setAttribute(
+    'aria-label',
+    `全${total}ページ。読んだ所 ${read || 'なし'}。` +
+      (book.position !== null ? `しおり p.${book.position}。` : '') +
+      `問い${nq}・クイズ${placed.length - nq}`,
+  );
+  return band;
+}
+
+/** 余白: 問いとクイズを本の中の位置順に。本人の問いを地の色、クイズは薄墨(責めない)。 */
+function marginalia(marks) {
+  const list = el('ol', 'marginalia');
+  for (const m of marks) {
+    const li = el('li', `mg mg-${m.kind}`);
+    li.append(el('span', 'mg-page', m.page !== null ? `p.${m.page}` : '—'));
+    li.append(el('span', `mg-glyph mk-${m.kind}`));
+    const body = el('div', 'mg-body');
+    const text = el('span', 'mg-text', m.text);
+    body.append(text);
+    if (m.kind === 'question') {
+      if (m.selection) body.append(el('span', 'mg-sel', `「${m.selection}」`));
+      if (m.answer) body.append(el('span', 'mg-ans', m.answer));
+    } else {
+      if (m.answer) text.title = `正解: ${m.answer}`;
+      const marks = el('span', 'mk');
+      if (m.attempts.length === 0) marks.textContent = ' 未回答';
+      for (const c of m.attempts) marks.append(el('span', c ? 'mk-o' : 'mk-x', c ? '○' : '×'));
+      body.append(marks);
+    }
+    li.append(body);
+    list.append(li);
+  }
+  return list;
+}
+
+/** 読んだ日: 区間ごとに一行(新しい順)。帯と同じ横軸の細い棒で、どこを読んだかを並べる。 */
+function readingDays(book) {
+  const list = el('ol', 'days');
+  for (const r of book.readings) {
+    const li = el('li');
+    li.append(el('span', 'day-date', shortDate(r.started_at)));
+    const track = el('span', 'day-track');
+    const seg = el('i');
+    seg.style.left = at(r.from - 1, book.total);
+    seg.style.width = at(r.to - r.from + 1, book.total);
+    track.append(seg);
+    li.append(track);
+    li.append(el('span', 'day-meta', `${pageRange(r.from, r.to)} · ${r.read_min}分`));
+    list.append(li);
+  }
+  return list;
+}
+
+function drawShelf(books) {
+  const list = $('shelf');
+  list.textContent = '';
+  for (const book of books) {
+    const li = el('li', 'book');
+    const title = el('a', 'row-title', book.title || '(書名なし)');
+    title.href = book.url;
+    title.target = '_blank';
+    title.rel = 'noopener';
+
+    const parts = [shortDate(book.last_read_at)];
+    if (book.finished) {
+      parts.push(book.finished_at ? `読了 ${shortDate(book.finished_at)}` : '読了');
+    } else if (book.position !== null && book.total) {
+      parts.push(`p.${book.position} / ${book.total}`);
+    }
+    if (book.remaining_min !== null) {
+      // 見積もりなので1時間を超えたら10分単位に丸める(「3時間1分」のような細かさを出さない)
+      const m = book.remaining_min;
+      parts.push(`あと約${durationText(m >= 60 ? Math.round(m / 10) * 10 : m)}`);
+    }
+    parts.push(`計${durationText(book.total_read_min)}`);
+    li.append(title, el('span', 'row-meta', parts.filter(Boolean).join(' · ')));
+
+    if (book.total) li.append(bookBand(book));
+
+    if (book.marks.length > 0 || book.readings.length > 0) {
+      const details = el('details', 'margin');
+      details.append(
+        el('summary', null, `余白 ${book.marks.length} · 読んだ日 ${book.readings.length}`),
+      );
+      if (book.marks.length > 0) {
+        details.append(el('span', 'sub', '余白'), marginalia(book.marks));
+      }
+      if (book.readings.length > 0 && book.total) {
+        details.append(el('span', 'sub', '読んだ日'), readingDays(book));
+      }
+      li.append(details);
+    }
+    list.append(li);
+  }
+}
+
 // ---- 描画 -----------------------------------------------------------------
 
 function drawChart(weeks) {
@@ -288,7 +468,7 @@ function drawQuizzes(items) {
     meta.className = 'row-meta';
     const parts = [shortDate(q.created_at), q.page_title].filter(Boolean);
     meta.textContent = `${parts.join(' · ')} · `;
-    // 回答履歴は ○× の並び(事実)。○=金、×=薄墨(責めない)
+    // 回答履歴は ○× の並び(事実)。○=はなまるの赤、×=薄墨(責めない)
     const marks = document.createElement('span');
     marks.className = 'mk';
     if (q.attempts.length === 0) {
@@ -311,7 +491,9 @@ function drawTotals(t) {
   const dl = $('totals');
   dl.textContent = '';
   const rows = [
-    ['読んだページ', `${t.pages}`],
+    ['読んだ本', `${t.books}冊`],
+    ['読み終えた本', `${t.books_finished}冊`],
+    ...(t.articles > 0 ? [['読んだ記事', `${t.articles}`]] : []),
     ['セッション', `${t.sessions}`],
     ['読書時間', `${t.read_min}分`],
     ['うち補助なし', `${t.unassisted_min}分`],
@@ -335,15 +517,17 @@ function drawTotals(t) {
 // ---- データ管理 -----------------------------------------------------------
 
 $('export').addEventListener('click', async () => {
-  const [state, sessions, events, pages, quizzes, attempts, questions] = await Promise.all([
-    getState(),
-    getAllSessions(),
-    getAllEvents(),
-    getAllPages(),
-    getAllQuizzes(),
-    getAllQuizAttempts(),
-    getAllQuestions(),
-  ]);
+  const [state, sessions, events, pages, readings, quizzes, attempts, questions] =
+    await Promise.all([
+      getState(),
+      getAllSessions(),
+      getAllEvents(),
+      getAllPages(),
+      getAllReadings(),
+      getAllQuizzes(),
+      getAllQuizAttempts(),
+      getAllQuestions(),
+    ]);
   const data = {
     format: 'reading-scaffold-export',
     version: chrome.runtime.getManifest?.().version ?? null,
@@ -352,6 +536,7 @@ $('export').addEventListener('click', async () => {
     sessions,
     events,
     pages,
+    readings,
     quizzes,
     quiz_attempts: attempts,
     questions,
@@ -449,7 +634,7 @@ $('wipe').addEventListener('click', async () => {
 
 // ---- 初期描画 -------------------------------------------------------------
 
-/** 自立の推移。θ日次履歴から上昇曲線を描く(SVG折れ線・金)。目盛りはHTML側。 */
+/** 自立の推移。θ日次履歴から上昇曲線を描く(SVG折れ線+下に水彩の塗り)。目盛りはHTML側。 */
 function drawGrowth(points) {
   const svg = $('growth');
   svg.textContent = '';
@@ -488,17 +673,24 @@ function drawGrowth(points) {
     xAxis.append(span);
   }
 
+  const linePts = points.map((p, i) => `${x(i)},${y(p.theta)}`).join(' ');
+  const area = document.createElementNS(ns, 'polygon');
+  area.setAttribute('points', `${x(0)},${bottom} ${linePts} ${x(points.length - 1)},${bottom}`);
+  area.setAttribute('class', 'growth-area');
+  svg.append(area);
+
   const poly = document.createElementNS(ns, 'polyline');
-  poly.setAttribute('points', points.map((p, i) => `${x(i)},${y(p.theta)}`).join(' '));
+  poly.setAttribute('points', linePts);
   poly.setAttribute('class', 'growth-line');
   svg.append(poly);
 
   points.forEach((p, i) => {
+    const last = i === points.length - 1;
     const dot = document.createElementNS(ns, 'circle');
     dot.setAttribute('cx', x(i));
     dot.setAttribute('cy', y(p.theta));
-    dot.setAttribute('r', i === points.length - 1 ? 4.5 : 2.5);
-    dot.setAttribute('class', 'growth-dot');
+    dot.setAttribute('r', last ? 5.5 : 2.5);
+    dot.setAttribute('class', last ? 'growth-dot growth-dot-now' : 'growth-dot');
     svg.append(dot);
   });
 }
@@ -526,8 +718,16 @@ function drawWeekLine(week) {
   }
 }
 
+// ヘッダのくま(読書中に顔を出すのと同じ子)。飾りなので一度描くだけ
+$('mascot').innerHTML = bearSVG('peek');
+
 async function render() {
   $('ver').textContent = `v${chrome.runtime.getManifest?.().version ?? '?'}`;
+
+  const shelf = await buildBookshelf();
+  $('shelf-empty').hidden = shelf.length > 0;
+  $('shelf-legend').hidden = !shelf.some((b) => b.total);
+  drawShelf(shelf);
 
   const state = await getState();
   renderTheta(state.theta);
@@ -541,12 +741,14 @@ async function render() {
   if (hasData) drawChart(mirror.weeks);
   drawWeekLine(mirror.this_week);
 
-  const library = await buildLibrary(200);
-  $('library-empty').hidden = library.length > 0;
-  drawLibrary(library);
+  // 本以外(Web記事)と、そのクイズ。本のクイズは本棚の余白に出ている
+  const articles = (await buildLibrary(200)).filter((p) => !isBookPage(p));
+  $('library-sec').hidden = articles.length === 0;
+  drawLibrary(articles);
 
-  const quizzes = await buildQuizLog();
-  $('quizzes-empty').hidden = quizzes.length > 0;
+  const bookIds = new Set(shelf.map((b) => b.page_id));
+  const quizzes = (await buildQuizLog()).filter((q) => !bookIds.has(q.page_id));
+  $('quizzes-sec').hidden = quizzes.length === 0;
   drawQuizzes(quizzes);
 
   drawTotals(await buildTotals());

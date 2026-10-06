@@ -1,30 +1,30 @@
-/* 夜の書斎。墨の紙に、製品の報酬色である金だけを差す。
-   見出しと書名は明朝(本の書体)、UIと数字はゴシック。
-   シグネチャは帯: θのスライダーを帯として描き、つまみは署名のリング。 */
+/* 絵本・水彩。読書中の演出(stage.js / margin.js / bear.js)と同じ画風にそろえる:
+   生成りの紙に水彩のにじみ、セピアの太い描き線、丸ゴシック。
+   節は紙のカード(手描きの角丸+色付きの影)で、見出しはクイズと同じ「本の帯」のラベル。
+   色は演出と同じ水彩の6色だけ。記録の画面なので動きは入場だけ(報酬の演出は出さない)。 */
 
 :root {
-  --bg: #171310;
-  --ink: #eae3d6;
-  --muted: rgba(234, 227, 214, 0.55);
-  --faint: rgba(234, 227, 214, 0.12);
-  --gold: #d9a441;
-  --gold-bright: #e9bb63;
-  --danger: #c0574a;
-  color-scheme: dark;
-  font-family: 'Hiragino Sans', 'Yu Gothic', system-ui, sans-serif;
-}
-
-@media (prefers-color-scheme: light) {
-  :root {
-    --bg: #f6f1e7;
-    --ink: #272219;
-    --muted: rgba(39, 34, 25, 0.58);
-    --faint: rgba(39, 34, 25, 0.14);
-    --gold: #a87718;
-    --gold-bright: #8f650f;
-    --danger: #a8402f;
-    color-scheme: light;
-  }
+  --paper: #fffdf6;
+  --bg: #fbf3e4;
+  --ink: #4a2f24;
+  --muted: rgba(74, 47, 36, 0.62);
+  --faint: rgba(74, 47, 36, 0.14);
+  --line: 3px solid var(--ink);
+  /* 水彩の6色(paint.js の WATER と同じ) */
+  --coral: #f26b8a;
+  --honey: #ffb347;
+  --sun: #ffd23f;
+  --mint: #4cc9a3;
+  --sky: #4fa3e3;
+  --lilac: #a78bfa;
+  /* 線・文字に使う濃いめの色(紙の上で読める濃さ) */
+  --honey-deep: #e8964a;
+  --coral-deep: #d9486b;
+  --danger: #d9486b;
+  --rainbow: linear-gradient(90deg, #f26b8a, #ffb347, #ffd23f, #4cc9a3, #4fa3e3, #a78bfa);
+  color-scheme: light;
+  font-family: 'Hiragino Maru Gothic ProN', 'Zen Maru Gothic', 'M PLUS Rounded 1c', 'Hiragino Sans',
+    sans-serif;
 }
 
 /* hidden属性をdisplay:flex等の指定より必ず優先させる */
@@ -34,24 +34,37 @@
 
 body {
   margin: 0;
-  background: var(--bg);
   color: var(--ink);
   font-size: 14px;
   line-height: 1.7;
+  /* 紙のざらつき */
+  background: var(--bg)
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='180' height='180'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 .29 0 0 0 0 .18 0 0 0 0 .14 0 0 0 .07 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+}
+
+/* 四隅の水彩のにじみ(にじんだ縁が少し濃くなる、水彩の溜まり) */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1000 1000' preserveAspectRatio='xMidYMid slice'><filter id='w' x='-30%' y='-30%' width='160%' height='160%'><feTurbulence type='fractalNoise' baseFrequency='.011' numOctaves='3' seed='7'/><feDisplacementMap in='SourceGraphic' scale='70' xChannelSelector='R' yChannelSelector='G'/></filter><g filter='url(%23w)' stroke-width='5'><circle cx='40' cy='60' r='190' fill='%23f26b8a' fill-opacity='.13' stroke='%23f26b8a' stroke-opacity='.2'/><circle cx='980' cy='140' r='160' fill='%234fa3e3' fill-opacity='.12' stroke='%234fa3e3' stroke-opacity='.18'/><circle cx='960' cy='930' r='200' fill='%234cc9a3' fill-opacity='.13' stroke='%234cc9a3' stroke-opacity='.2'/><circle cx='20' cy='900' r='170' fill='%23ffd23f' fill-opacity='.2' stroke='%23ffb347' stroke-opacity='.22'/></g></svg>")
+    center / cover no-repeat;
 }
 
 main {
-  max-width: 640px;
+  max-width: 680px;
   margin: 0 auto;
-  padding: 48px 24px 96px;
+  padding: 36px 24px 96px;
   display: grid;
-  gap: 56px;
+  gap: 46px;
 }
 
-/* 入場: そっと浮かび上がる(動きを減らす設定を尊重) */
+/* 入場: ぽんと置かれる(動きを減らす設定を尊重) */
 @media (prefers-reduced-motion: no-preference) {
   main > * {
-    animation: rise 0.55s ease both;
+    animation: rise 0.55s cubic-bezier(0.2, 1.4, 0.4, 1) both;
   }
   main > :nth-child(2) { animation-delay: 0.06s; }
   main > :nth-child(3) { animation-delay: 0.12s; }
@@ -61,64 +74,114 @@ main {
   main > :nth-child(7) { animation-delay: 0.36s; }
   main > :nth-child(8) { animation-delay: 0.42s; }
   main > :nth-child(9) { animation-delay: 0.48s; }
+  main > :nth-child(10) { animation-delay: 0.54s; }
 }
 
 @keyframes rise {
   from {
     opacity: 0;
-    transform: translateY(10px);
+    transform: translateY(14px) scale(0.98);
   }
 }
 
-/* ---- ヘッダ ---- */
+/* ---- ヘッダ: 本から顔を出すくま ---- */
 
 header {
   display: flex;
-  align-items: baseline;
-  gap: 10px;
+  align-items: flex-end;
+  gap: 12px;
+  margin-bottom: -18px;
 }
 
-.ring {
+.mascot {
   flex: none;
-  width: 14px;
-  height: 14px;
-  border: 1.5px solid var(--gold);
-  border-radius: 50%;
-  align-self: center;
+  width: 74px;
+  margin-bottom: -6px;
+}
+
+.mascot svg {
+  display: block;
+  width: 100%;
+  height: auto;
 }
 
 h1 {
-  margin: 0;
-  font-family: 'Hiragino Mincho ProN', 'Yu Mincho', 'Noto Serif JP', serif;
-  font-size: 16px;
-  font-weight: 500;
-  letter-spacing: 0.04em;
+  margin: 0 0 6px;
+  font-size: 21px;
+  font-weight: 900;
+  letter-spacing: 0.02em;
+  line-height: 1.3;
+  /* 水彩の蛍光ペン */
+  background: linear-gradient(transparent 62%, rgba(255, 210, 63, 0.6) 62%, rgba(255, 179, 71, 0.5) 92%, transparent 92%);
+  padding: 0 4px;
 }
 
 .ver {
+  margin-bottom: 9px;
   font-size: 11px;
+  font-weight: 700;
   color: var(--muted);
   font-variant-numeric: tabular-nums;
+  border: 2px solid var(--faint);
+  border-radius: 999px;
+  padding: 0 8px;
 }
 
-/* ---- 見出し(小さく・間を張る) ---- */
+/* ---- 節: 紙のカード ---- */
 
+main > section {
+  position: relative;
+  background: var(--paper);
+  border: var(--line);
+  border-radius: 24px 18px 26px 20px / 20px 26px 18px 24px;
+  padding: 34px 24px 22px;
+  --shadow: rgba(242, 107, 138, 0.34);
+  box-shadow: 6px 8px 0 var(--shadow);
+}
+
+main > section:nth-of-type(6n + 2) {
+  --shadow: rgba(255, 179, 71, 0.42);
+  border-radius: 20px 26px 18px 24px / 24px 18px 26px 20px;
+}
+main > section:nth-of-type(6n + 3) {
+  --shadow: rgba(76, 201, 163, 0.38);
+  border-radius: 26px 20px 24px 18px / 18px 24px 20px 26px;
+}
+main > section:nth-of-type(6n + 4) {
+  --shadow: rgba(79, 163, 227, 0.34);
+  border-radius: 18px 24px 20px 26px / 26px 20px 24px 18px;
+}
+main > section:nth-of-type(6n + 5) {
+  --shadow: rgba(167, 139, 250, 0.34);
+}
+main > section:nth-of-type(6n) {
+  --shadow: rgba(255, 210, 63, 0.5);
+  border-radius: 20px 26px 18px 24px / 24px 18px 26px 20px;
+}
+
+/* 見出し = 本の帯のラベル(クイズのカードと同じ形)。カードの上辺にかける */
 .eyebrow {
-  display: block;
-  font-size: 10.5px;
-  letter-spacing: 0.22em;
-  color: var(--muted);
-  margin-bottom: 14px;
+  position: absolute;
+  left: 18px;
+  top: -17px;
+  transform: rotate(-2.5deg);
+  background: #fff8ea;
+  background-image: var(--rainbow), var(--rainbow);
+  background-size: 100% 4px;
+  background-repeat: no-repeat;
+  background-position: top, bottom;
+  border: var(--line);
+  border-radius: 4px;
+  padding: 5px 14px 4px;
+  font-size: 13px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  line-height: 1.4;
+  white-space: nowrap;
 }
 
-.eyebrow::before {
-  content: '';
-  display: inline-block;
-  width: 14px;
-  height: 1px;
-  background: var(--gold);
-  margin-right: 10px;
-  vertical-align: middle;
+main > section:nth-of-type(even) .eyebrow {
+  transform: rotate(2deg);
 }
 
 .note {
@@ -131,12 +194,14 @@ h1 {
 
 .obi-head {
   display: flex;
-  align-items: baseline;
-  justify-content: space-between;
+  align-items: center;
+  justify-content: flex-end;
+  min-height: 4px;
 }
 
 .theta-read {
-  font-size: 13px;
+  font-size: 12.5px;
+  font-weight: 700;
   color: var(--muted);
   font-variant-numeric: tabular-nums;
 }
@@ -145,42 +210,59 @@ h1 {
 .rank-line {
   display: flex;
   align-items: center;
-  gap: 14px;
-  margin: 16px 0 4px;
+  gap: 16px;
+  margin: 4px 0 4px;
 }
 
+/* 帯(武道の帯): 色はJSが段位で塗る。結び目つき */
 .belt {
-  width: 46px;
-  height: 13px;
-  border-radius: 3px;
-  background: #ede6d8;
-  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.3);
+  position: relative;
+  width: 64px;
+  height: 18px;
+  border: var(--line);
+  border-radius: 5px;
+  background: #fffaf0;
+  transform: rotate(-4deg);
+}
+
+.belt::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 14px;
+  height: 20px;
+  border: var(--line);
+  border-radius: 5px;
+  background: inherit;
+  transform: translate(-50%, -50%) rotate(8deg);
 }
 
 .indep b {
-  font-size: 30px;
-  font-weight: 600;
+  font-size: 42px;
+  font-weight: 900;
+  line-height: 1;
   font-variant-numeric: tabular-nums;
+  padding: 0 4px;
+  background: linear-gradient(transparent 58%, rgba(255, 210, 63, 0.62) 58%, rgba(255, 210, 63, 0.62) 90%, transparent 90%);
 }
 
 .indep-cap {
-  font-size: 11px;
+  font-size: 12px;
+  font-weight: 700;
   color: var(--muted);
-  margin-left: 8px;
-  letter-spacing: 0.14em;
+  margin-left: 6px;
+  letter-spacing: 0.12em;
 }
 
-/* 帯本体(表示のみ): 右(8)ほど金が濃く、左端(0)=卒業へ向かって薄れていく */
+/* 帯本体(表示のみ): 右(8)ほど水彩が濃く、左端(0)=卒業へ向かって紙の色に近づく */
 .obi-track {
   position: relative;
-  height: 3px;
-  border-radius: 2px;
-  margin-top: 16px;
-  background: linear-gradient(
-    90deg,
-    color-mix(in srgb, var(--gold) 10%, transparent),
-    color-mix(in srgb, var(--gold) 70%, transparent)
-  );
+  height: 10px;
+  border: var(--line);
+  border-radius: 999px;
+  margin-top: 22px;
+  background: linear-gradient(90deg, #fffaf0, #ffe3a6 45%, var(--honey) 80%, var(--honey-deep));
 }
 
 /* リング=θの現在地。左端(0)に着いたら卒業 */
@@ -188,17 +270,42 @@ h1 {
   position: absolute;
   top: 50%;
   left: 100%;
-  width: 16px;
-  height: 16px;
-  border: 1.5px solid var(--gold-bright);
+  width: 26px;
+  height: 26px;
+  box-sizing: border-box;
+  border: var(--line);
   border-radius: 50%;
-  background: var(--bg);
+  background: radial-gradient(circle at 36% 34%, #fff6c8 0 18%, var(--sun) 46%, var(--honey) 100%);
   transform: translate(-50%, -50%);
-  box-shadow: 0 0 0 3px var(--bg);
-  transition: left 0.8s ease;
+  box-shadow: 2px 3px 0 rgba(74, 47, 36, 0.18);
+  transition: left 0.8s cubic-bezier(0.3, 1.4, 0.5, 1);
 }
 
-/* 自立の推移 */
+.obi-ends {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  margin-top: 6px;
+}
+
+.week-line {
+  margin: 18px 0 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.week-line b {
+  font-weight: 900;
+  font-size: 16px;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- グラフ共通(自立の推移・週次目標) ---- */
+
 .growth-wrap {
   display: flex;
   gap: 10px;
@@ -214,6 +321,7 @@ h1 {
   /* 上下パディングでSVG内のグリッド線(y=14/146 of 160)に目盛りを揃える */
   padding: 8px 0 26px;
   font-size: 10.5px;
+  font-weight: 700;
   color: var(--muted);
   font-variant-numeric: tabular-nums;
 }
@@ -223,10 +331,12 @@ h1 {
   min-width: 0;
 }
 
-#growth {
+#growth,
+#kpi {
   width: 100%;
   height: 160px;
   display: block;
+  overflow: visible;
 }
 
 .growth-x {
@@ -234,73 +344,97 @@ h1 {
   justify-content: space-between;
   margin-top: 4px;
   font-size: 10.5px;
+  font-weight: 700;
   color: var(--muted);
   font-variant-numeric: tabular-nums;
 }
 
+/* SVGは横に伸ばして描くので、線の太さは伸ばさない */
+#growth *,
+#kpi * {
+  vector-effect: non-scaling-stroke;
+}
+
 .growth-grid {
   stroke: var(--faint);
-  stroke-width: 1;
+  stroke-width: 1.5;
+  stroke-dasharray: 2 6;
+  stroke-linecap: round;
+}
+
+/* 線の下の水彩の塗り */
+.growth-area {
+  fill: rgba(255, 210, 63, 0.26);
+  stroke: none;
 }
 
 .growth-line {
   fill: none;
-  stroke: var(--gold);
-  stroke-width: 2;
+  stroke: var(--honey-deep);
+  stroke-width: 3.5;
   stroke-linejoin: round;
   stroke-linecap: round;
 }
 
 .growth-dot {
-  fill: var(--gold-bright);
+  fill: var(--honey-deep);
+}
+
+/* 最新の点(いま) */
+.growth-dot-now {
+  fill: var(--coral);
+  stroke: var(--ink);
+  stroke-width: 2.5;
 }
 
 /* ---- 週次目標(達成率×θの二軸) ---- */
-
-#kpi {
-  width: 100%;
-  height: 160px;
-  display: block;
-}
 
 .kpi-y-right {
   align-items: flex-start;
   width: 24px;
 }
 
-/* 合格ライン(達成率80%)。点線・薄墨。棒と同じく、下回っても色は変えない */
+/* 合格ライン(達成率80%)。点線・墨。棒と同じく、下回っても色は変えない */
 .kpi-pass {
   stroke: var(--muted);
-  stroke-width: 1;
-  stroke-dasharray: 4 4;
+  stroke-width: 2;
+  stroke-dasharray: 6 6;
+  stroke-linecap: round;
 }
 
-/* 達成率の棒。責めない: 未達でも色は変えない(薄墨のまま)、満了だけ静かに濃くなる */
+/* 達成率の棒。責めない: 未達でも色は変えない(淡い空色のまま)、満了だけ少し濃くなる */
 .kpi-bar {
-  fill: var(--faint);
+  fill: rgba(79, 163, 227, 0.2);
+  stroke: var(--ink);
+  stroke-width: 2.5;
+  rx: 5px;
 }
 
 .kpi-bar-full {
-  fill: color-mix(in srgb, var(--ink) 34%, transparent);
+  fill: rgba(79, 163, 227, 0.45);
 }
 
 #goal {
+  margin-left: auto;
+  max-width: 100%;
   font: inherit;
   font-size: 12px;
+  font-weight: 700;
   color: var(--ink);
-  background: none;
-  border: 1px solid var(--faint);
+  background: var(--paper);
+  border: 2.5px solid var(--ink);
   border-radius: 999px;
-  padding: 3px 10px;
+  padding: 4px 12px;
+  box-shadow: 2px 3px 0 rgba(79, 163, 227, 0.4);
   cursor: pointer;
 }
 
 #goal:hover {
-  border-color: var(--gold);
+  box-shadow: 3px 4px 0 rgba(79, 163, 227, 0.55);
 }
 
 #goal option {
-  background: var(--bg);
+  background: var(--paper);
 }
 
 /* θ手動上書き(開発用・データ節の折りたたみ) */
@@ -308,8 +442,10 @@ details.override {
   margin-top: 16px;
 }
 
-details.override summary {
+details.override summary,
+details.margin summary {
   font-size: 12px;
+  font-weight: 700;
   color: var(--muted);
   cursor: pointer;
 }
@@ -328,7 +464,7 @@ details.override .actions {
 details.override input[type='range'] {
   width: 100%;
   margin-top: 10px;
-  accent-color: var(--gold);
+  accent-color: var(--honey-deep);
 }
 
 .demo-toggle {
@@ -341,37 +477,15 @@ details.override input[type='range'] {
 }
 
 .demo-toggle input {
-  accent-color: var(--gold);
+  accent-color: var(--honey-deep);
 }
 
-.obi-ends {
-  display: flex;
-  justify-content: space-between;
-  font-size: 10.5px;
-  color: var(--muted);
-  font-variant-numeric: tabular-nums;
-  margin-top: 2px;
-}
-
-.week-line {
-  margin: 22px 0 0;
-  font-size: 13px;
-  color: var(--muted);
-}
-
-.week-line b {
-  font-weight: 600;
-  font-size: 15px;
-  color: var(--ink);
-  font-variant-numeric: tabular-nums;
-}
-
-/* ---- 週次グラフ: 補助なし=金、補助あり=薄墨 ---- */
+/* ---- 週次グラフ: 補助なし=おひさま色、補助あり=淡い紙色 ---- */
 
 #chart {
   display: flex;
   align-items: flex-end;
-  gap: 8px;
+  gap: 10px;
   min-height: 150px;
 }
 
@@ -389,31 +503,44 @@ details.override input[type='range'] {
   height: 112px;
   display: flex;
   flex-direction: column-reverse;
-  border-radius: 3px 3px 0 0;
-  overflow: hidden;
+}
+
+/* 描き線は内側の影で引く(高さ0の週は線も出ない) */
+#chart .unassisted,
+#chart .assisted {
+  border-radius: 9px 9px 4px 4px;
+  box-shadow: inset 0 0 0 2.5px var(--ink);
 }
 
 #chart .unassisted {
-  background: var(--gold);
+  background: linear-gradient(180deg, var(--sun), var(--honey));
 }
 
 #chart .assisted {
-  background: var(--faint);
+  background: #f3e7d4;
+}
+
+/* 補助ありの上に積むときは、描き線を1本に重ねる */
+#chart .assisted + .unassisted {
+  margin-bottom: -2.5px;
+  border-radius: 9px 9px 0 0;
 }
 
 #chart .value,
 #chart .label {
   font-size: 10.5px;
+  font-weight: 700;
   color: var(--muted);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
 
 #chart .value {
-  color: var(--gold);
+  color: var(--ink);
+  font-weight: 900;
 }
 
-/* ---- 一覧(書架・クイズ): 書名は明朝 ---- */
+/* ---- 一覧(本棚・記事・クイズ) ---- */
 
 .rows {
   list-style: none;
@@ -423,7 +550,7 @@ details.override input[type='range'] {
 
 .rows li {
   padding: 12px 2px;
-  border-top: 1px solid var(--faint);
+  border-top: 2px dashed var(--faint);
 }
 
 .rows li:first-child {
@@ -436,13 +563,13 @@ details.override input[type='range'] {
 }
 
 .rows li.clickable:hover .row-title {
-  color: var(--gold-bright);
+  color: var(--honey-deep);
 }
 
 .row-title {
   display: block;
-  font-family: 'Hiragino Mincho ProN', 'Yu Mincho', 'Noto Serif JP', serif;
   font-size: 14.5px;
+  font-weight: 800;
   line-height: 1.5;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -458,18 +585,322 @@ details.override input[type='range'] {
   margin-top: 2px;
 }
 
-/* 回答履歴: ○=金、×=薄墨(責めない) */
+/* 回答履歴: ○=はなまるの赤、×=薄墨(責めない) */
 .mk {
   letter-spacing: 3px;
 }
 
 .mk-o {
-  color: var(--gold);
+  color: var(--coral-deep);
+  font-weight: 900;
 }
 
 .mk-x {
   color: var(--muted);
   opacity: 0.6;
+}
+
+/* ---- 本棚: 帯は本の長さ。はちみつの濃さ=読んだ回数(1回・2回・3回以上)、しおり=今の位置 ---- */
+
+.shelf > li {
+  padding: 16px 2px 14px;
+}
+
+/* 本の中の一覧(余白・読んだ日)には、外側の一覧の罫線と余白をかけない */
+.shelf .marginalia > li,
+.shelf .days > li {
+  padding: 0;
+  border-top: none;
+}
+
+a.row-title {
+  color: inherit;
+  text-decoration: none;
+  font-size: 16px;
+}
+
+a.row-title:hover {
+  color: var(--honey-deep);
+}
+
+.band {
+  margin-top: 12px;
+}
+
+/* 問い・クイズの段(位置だけを示す点の列) */
+.band-lane {
+  position: relative;
+  height: 14px;
+}
+
+.band-track {
+  position: relative;
+  height: 9px;
+  margin-top: 8px;
+  border: 2.5px solid var(--ink);
+  border-radius: 999px;
+  background: #fff7e6;
+}
+
+.band-run {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-radius: 999px;
+}
+
+/* 隣り合う塗りの間は紙の色で2pxあける(枠線で区切らない) */
+.band-run + .band-run {
+  border-left: 2px solid var(--paper);
+}
+
+.band-run-1,
+.lg-run-1 {
+  background: #ffe1a3;
+}
+
+.band-run-2,
+.lg-run-2 {
+  background: var(--honey);
+}
+
+.band-run-3,
+.lg-run-3 {
+  background: var(--honey-deep);
+}
+
+/* 点の当たり判定は見た目より大きく。見た目は ::after */
+.band-mark {
+  position: absolute;
+  top: 50%;
+  width: 16px;
+  height: 16px;
+  transform: translate(-50%, -50%);
+}
+
+.mk-question::after,
+.mk-quiz::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  border-radius: 50%;
+  box-sizing: border-box;
+}
+
+/* 問い=輪(読書中の問いの入口と同じ形)。本人起点なので太い描き線 */
+.mk-question::after {
+  width: 12px;
+  height: 12px;
+  border: 2.5px solid var(--ink);
+  background: var(--paper);
+}
+
+/* クイズ=おひさま色の小さな点(クイズのカードの色)。システムが出したものなので控えめ */
+.mk-quiz::after {
+  width: 8px;
+  height: 8px;
+  background: var(--sun);
+  border: 1.5px solid var(--muted);
+}
+
+/* しおり: 水彩の赤いリボン */
+.band-bookmark {
+  position: absolute;
+  top: -10px;
+  width: 12px;
+  height: 25px;
+  background: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 25'><path d='M1.5 1.5h9v22l-4.5-4.6-4.5 4.6z' fill='%23f26b8a' stroke='%234a2f24' stroke-width='2' stroke-linejoin='round'/></svg>")
+    center / contain no-repeat;
+  transform: translateX(-50%);
+}
+
+.band-bookmark::before {
+  content: '';
+  position: absolute;
+  inset: -2px -4px;
+}
+
+.band-ends {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 4px;
+  font-size: 10.5px;
+  font-weight: 700;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.shelf-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+  margin: 14px 0 0;
+  padding-top: 12px;
+  border-top: 2px dashed var(--faint);
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted);
+}
+
+.lg {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.lg-run {
+  display: inline-block;
+  width: 12px;
+  height: 7px;
+  border-radius: 999px;
+  box-shadow: inset 0 0 0 1.5px var(--ink);
+  margin-right: -3px;
+}
+
+.lg-run:last-of-type {
+  margin-right: 0;
+}
+
+.lg-mark {
+  position: relative;
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+}
+
+.lg-bookmark {
+  width: 9px;
+  height: 18px;
+  background: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 25'><path d='M1.5 1.5h9v22l-4.5-4.6-4.5 4.6z' fill='%23f26b8a' stroke='%234a2f24' stroke-width='2' stroke-linejoin='round'/></svg>")
+    center / contain no-repeat;
+}
+
+/* 余白と読んだ日(開いたときだけ) */
+details.margin {
+  margin-top: 12px;
+}
+
+details.margin summary {
+  font-variant-numeric: tabular-nums;
+}
+
+details.margin summary:hover,
+details.override summary:hover {
+  color: var(--ink);
+}
+
+.sub {
+  display: inline-block;
+  margin: 16px 0 8px;
+  padding: 0 8px;
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.14em;
+  border-radius: 999px;
+  background: rgba(76, 201, 163, 0.22);
+}
+
+.marginalia,
+.days {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+}
+
+.marginalia {
+  gap: 12px;
+}
+
+.mg {
+  display: grid;
+  grid-template-columns: 34px 14px 1fr;
+  gap: 10px;
+  align-items: start;
+}
+
+.mg-page {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.75;
+}
+
+.mg-glyph {
+  position: relative;
+  width: 14px;
+  height: 14px;
+  margin-top: 4px;
+}
+
+.mg-text {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.mg-quiz .mg-text {
+  color: var(--muted);
+}
+
+.mg .mk {
+  margin-left: 6px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.mg-sel {
+  display: block;
+  margin-top: 4px;
+  padding-left: 8px;
+  border-left: 3px solid var(--sun);
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
+.mg-ans {
+  display: block;
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.days {
+  gap: 6px;
+}
+
+/* 右の列は固定幅: 行ごとに横棒の長さ(=本の縮尺)を揃える */
+.days li {
+  display: grid;
+  grid-template-columns: 34px 1fr 112px;
+  gap: 10px;
+  align-items: center;
+  font-size: 11.5px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.day-date,
+.day-meta {
+  text-align: right;
+}
+
+.day-track {
+  position: relative;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--faint);
+}
+
+.day-track i {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  min-width: 4px;
+  border-radius: 999px;
+  background: var(--honey);
 }
 
 /* ---- 累計: 目次のドットリーダー ---- */
@@ -478,7 +909,7 @@ details.override input[type='range'] {
   margin: 0;
   display: grid;
   gap: 8px;
-  max-width: 380px;
+  max-width: 400px;
 }
 
 .ledger > div {
@@ -489,57 +920,83 @@ details.override input[type='range'] {
 
 .ledger dt {
   font-size: 12.5px;
+  font-weight: 700;
   color: var(--muted);
 }
 
 .ledger .leader {
   flex: 1;
-  border-bottom: 1px dotted color-mix(in srgb, var(--ink) 30%, transparent);
-  transform: translateY(-3px);
+  border-bottom: 2.5px dotted rgba(74, 47, 36, 0.24);
+  transform: translateY(-4px);
 }
 
 .ledger dd {
   margin: 0;
-  font-size: 14px;
+  font-size: 15px;
+  font-weight: 900;
   font-variant-numeric: tabular-nums;
 }
 
 /* ---- データ管理 ---- */
 
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 10px 0 6px;
+}
+
 .actions button,
 .danger button {
   font: inherit;
   font-size: 12.5px;
-  padding: 7px 16px;
-  border: 1px solid var(--faint);
+  font-weight: 800;
+  padding: 7px 18px;
+  border: 2.5px solid var(--ink);
   border-radius: 999px;
-  background: none;
+  background: var(--paper);
   color: var(--ink);
+  box-shadow: 3px 4px 0 rgba(255, 179, 71, 0.5);
   cursor: pointer;
-  transition: border-color 0.15s ease, color 0.15s ease;
+  transition: transform 0.12s ease, box-shadow 0.12s ease;
 }
 
-.actions button:hover {
-  border-color: var(--gold);
-  color: var(--gold-bright);
+.actions button:nth-child(2) {
+  box-shadow: 3px 4px 0 rgba(76, 201, 163, 0.45);
+}
+
+.actions button:hover,
+.danger button:hover {
+  transform: translate(-1px, -1px);
+}
+
+.actions button:active,
+.danger button:active {
+  transform: translate(3px, 4px);
+  box-shadow: none;
+}
+
+.actions button:disabled {
+  opacity: 0.5;
+  cursor: default;
+  transform: none;
 }
 
 .danger {
-  margin-top: 28px;
-  padding-top: 18px;
-  border-top: 1px solid var(--faint);
+  margin-top: 26px;
+  padding-top: 16px;
+  border-top: 2px dashed var(--faint);
 }
 
 .danger-note {
   font-size: 11px;
+  font-weight: 700;
   color: var(--muted);
   margin: 0 0 10px;
 }
 
 .danger button {
   color: var(--danger);
-}
-
-.danger button:hover {
   border-color: var(--danger);
+  box-shadow: 3px 4px 0 rgba(242, 107, 138, 0.3);
 }

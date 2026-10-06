@@ -8,10 +8,24 @@
   <body>
     <main>
       <header>
-        <span class="ring" aria-hidden="true"></span>
+        <span id="mascot" class="mascot" aria-hidden="true"></span>
         <h1>reading-scaffold</h1>
         <span id="ver" class="ver"></span>
       </header>
+
+      <!-- 本棚: 本ごとの位置・残り時間・読んだ所(帯)・余白。記録カテゴリ — 事実だけを出す
+           (docs/data-design.md §4)。θ の節より上に置く: 卒業後も残るのはこちら -->
+      <section aria-label="本棚">
+        <span class="eyebrow">本棚</span>
+        <ul id="shelf" class="rows shelf"></ul>
+        <p id="shelf-legend" class="shelf-legend" aria-hidden="true">
+          <span class="lg"><i class="lg-run lg-run-1"></i><i class="lg-run lg-run-2"></i><i class="lg-run lg-run-3"></i>読んだ所(濃いほど読み返した)</span>
+          <span class="lg"><i class="lg-mark mk-question"></i>問い</span>
+          <span class="lg"><i class="lg-mark mk-quiz"></i>クイズ</span>
+          <span class="lg"><i class="lg-mark lg-bookmark"></i>しおり(今の位置)</span>
+        </p>
+        <p id="shelf-empty" class="note" hidden>まだ本がありません。Play ブックスで本を開いて読み始めると、ここに並びます。</p>
+      </section>
 
       <!-- 帯: 自立度と段位。リングが左端(0)に着いたら卒業=黒帯 -->
       <section class="obi-sec" aria-label="帯">
@@ -45,7 +59,7 @@
         <p id="growth-empty" class="note" hidden>まだ推移はありません。</p>
       </section>
 
-      <!-- 週次目標: 達成率(棒)×θ(金の線)の二軸。達成率を保ったままθが下がることが
+      <!-- 週次目標: 達成率(棒)×θ(オレンジの線)の二軸。達成率を保ったままθが下がることが
            回復の証拠(docs/research/benchmark.md §5)。目標は本人が選ぶ・制御器は読まない・
            未達を警告しない(事実の表示のみ) -->
       <section aria-label="週次目標">
@@ -68,7 +82,7 @@
         </div>
         <p id="kpi-empty" class="note" hidden>まだ記録がありません。</p>
         <p id="kpi-line" class="week-line"></p>
-        <p class="note">棒は目標に対する達成率、金の線は補助量θ。目標は補助の量に影響しません。</p>
+        <p class="note">棒は目標に対する達成率、オレンジの線は補助量θ。目標は補助の量に影響しません。</p>
       </section>
 
       <section aria-label="週次推移">
@@ -77,16 +91,15 @@
         <p id="chart-empty" class="note" hidden>まだ記録がありません。</p>
       </section>
 
-      <section aria-label="書架">
-        <span class="eyebrow">書架</span>
+      <!-- 本以外(Web記事)。本のクイズは本棚の余白に出すので、ここには記事のものだけ -->
+      <section id="library-sec" aria-label="記事">
+        <span class="eyebrow">記事</span>
         <ul id="library" class="rows"></ul>
-        <p id="library-empty" class="note" hidden>まだ読んだものがありません。</p>
       </section>
 
-      <section aria-label="クイズ">
-        <span class="eyebrow">クイズ</span>
+      <section id="quizzes-sec" aria-label="記事のクイズ">
+        <span class="eyebrow">記事のクイズ</span>
         <ul id="quizzes" class="rows"></ul>
-        <p id="quizzes-empty" class="note" hidden>まだクイズは出ていません。</p>
       </section>
 
       <section aria-label="累計">
