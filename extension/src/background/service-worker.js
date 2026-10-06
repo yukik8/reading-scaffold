@@ -4,8 +4,8 @@
 // セッションが無いときは何も読まず何も書かずに戻る — 「計測はセッション中のみ」。
 
 import { Msg, EventType } from '../shared/events.js';
-import { QUIZ, GOALS, DIAGNOSIS } from '../shared/config.js';
-import { nanoQuiz, nanoAnswer } from './ai.js';
+import { QUIZ, GOALS, DIAGNOSIS, PLAY_BOOKS_SERVER } from '../shared/config.js';
+import { nanoQuiz, nanoAnswer, nanoTrivia, acceptTrivia } from './ai.js';
 import {
   startSession,
   endSession,
@@ -17,6 +17,7 @@ import {
   onTabUpdated,
   onWatchdog,
   setTheta,
+  getBookPosition,
   WATCHDOG_ALARM,
 } from './session.js';
 import { buildMirror } from './mirror.js';
@@ -134,9 +135,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // 外に出る唯一の経路。サーバは保存もログもしない)。両方失敗なら静かに
         // 諦め、content側は通常ヒントに戻る — クイズの都合で読書を壊さない。
         const text = (msg.paragraph_text ?? '').trim().slice(0, 2000);
+        // Play ブックスの本文を外部サーバへ送るかは設定で切り替える(著作物のため・β では同意が前提)
+        const serverAllowed =
+          PLAY_BOOKS_SERVER || (await getCurrentSession())?.site !== 'play_books';
         let data = null;
         const quiz = await nanoQuiz(text);
         if (quiz) data = { ok: true, quiz, source: 'nano' };
+        if (!data && !serverAllowed) data = { ok: false, error: 'unavailable' };
         if (!data) {
           try {
             const ctrl = new AbortController();
@@ -167,6 +172,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                 page_id: current?.page_id ?? null,
                 paragraph_hash: hash,
                 paragraph_excerpt: text.slice(0, 80),
+                // 出題した時点で開いていた本のページ(Play ブックス以外は null)
+                book_page: (await getBookPosition())?.page ?? null,
                 question: data.quiz.question,
                 choices: data.quiz.choices,
                 answer_index: data.quiz.answer_index,
@@ -204,7 +211,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // フォールバック。ただしサーバはAnthropic APIへ本文を転送する — この経路は
         // ドッグフーディング用。βでは同意事項(docs/ask-and-nano-design.md §4)。
         let res = await nanoAnswer({ question, selection, context });
-        if (!res) {
+        // Play ブックスの本文を外部サーバへ送るかは設定で切り替える(クイズと同じ)
+        if (!res && (PLAY_BOOKS_SERVER || current.site !== 'play_books')) {
           try {
             const ctrl = new AbortController();
             // 問いの回答はクイズより長くかかりうるので余裕をとる(12s→25s)
@@ -234,6 +242,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           await addQuestion({
             page_id: current.page_id ?? null,
             session_id: current.session_id,
+            // 問いを投げた時点の本のページと、選んでいた箇所(本人が指したところ)
+            book_page: (await getBookPosition())?.page ?? null,
+            selection: selection.trim() || null,
             question,
             answer: res.answer,
             created_at: Date.now(),
@@ -242,6 +253,38 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           /* 記録失敗は回答を妨げない */
         }
         sendResponse({ ok: true, answer: res.answer, source_index: res.source_index });
+        break;
+      }
+
+      case Msg.TRIVIA_REQUEST: {
+        // くまのうんちく(読み終えたページから・道具ではなく演出の一部)。Nano優先、使えなければ
+        // サーバ(Play ブックスは設定次第)。話せることが無ければ ok:false で、content側は何も出さない。
+        // 文面は記録層にも計測層にも残さない(出したことだけを content 側が計測層に報告する)。
+        const text = (msg.paragraph_text ?? '').trim().slice(0, 2000);
+        const current = await getCurrentSession();
+        if (!current || text.length < 60) {
+          sendResponse({ ok: false, error: 'no-material' });
+          break;
+        }
+        let trivia = await nanoTrivia(text);
+        if (!trivia && (PLAY_BOOKS_SERVER || current.site !== 'play_books')) {
+          try {
+            const ctrl = new AbortController();
+            const timer = setTimeout(() => ctrl.abort(), 20_000);
+            const r = await fetch(QUIZ.triviaEndpoint, {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({ paragraph_text: text }),
+              signal: ctrl.signal,
+            });
+            clearTimeout(timer);
+            const data = await r.json();
+            if (data?.ok) trivia = acceptTrivia(data.trivia); // 擬音・言い切れないものは捨てる
+          } catch {
+            /* サーバ不在。下で unavailable を返す */
+          }
+        }
+        sendResponse(trivia ? { ok: true, trivia } : { ok: false, error: 'unavailable' });
         break;
       }
 

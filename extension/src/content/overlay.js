@@ -57,6 +57,18 @@ const CSS = `
     opacity: 0.7;
   }
 
+  /* 紙のめくれ(pagecurl.js)。左下の角だけに描く層で、きらきらより下 */
+  .curl {
+    position: fixed;
+    left: 0;
+    bottom: 0;
+    width: 200px;
+    height: 200px;
+    z-index: 2147483644;
+    pointer-events: none;
+    visibility: hidden;
+  }
+
   /* きらきらの舞台。画面全体を覆う不可侵レイヤー(クリックは素通し) */
   .field {
     position: fixed;
@@ -388,7 +400,8 @@ function colorsOf(palette) {
   return pageLight ? p.light : p.dark;
 }
 
-function pageIsLight() {
+// ページの背景色 [r, g, b]
+function pageBackground() {
   for (const el of [document.body, document.documentElement]) {
     if (!el) continue;
     const bg = getComputedStyle(el).backgroundColor;
@@ -396,10 +409,14 @@ function pageIsLight() {
     if (!m) continue;
     const alpha = m[4] === undefined ? 1 : parseFloat(m[4]);
     if (alpha < 0.5) continue; // 透明なら下のレイヤーを見る
-    const lum = 0.2126 * m[1] + 0.7152 * m[2] + 0.0722 * m[3];
-    return lum > 140;
+    return [Number(m[1]), Number(m[2]), Number(m[3])];
   }
-  return true; // どちらも透明ならブラウザ既定(白)とみなす
+  return [255, 255, 255]; // どちらも透明ならブラウザ既定(白)とみなす
+}
+
+function pageIsLight() {
+  const [r, g, b] = pageBackground();
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b > 140;
 }
 
 // 本文カラムの位置(main.jsが設定)。日常の星はこの外側=余白にだけ出す。
@@ -408,32 +425,39 @@ function pageIsLight() {
 let textColumn = null;
 
 export function setTextColumn(col) {
-  textColumn = col; // { left, right } in viewport px、無ければnull
+  // { left, right, top, bottom, vertical } in viewport px、無ければnull
+  textColumn = col;
 }
 
 const MARGIN_PAD = 24; // 本文からこれだけ離す
 const MIN_ZONE = 56; // これより狭い余白は使わない
 
+// 余白の帯。横書きは本文の左右、縦書き(Play ブックス等)は本文の上下にできる。
+// 帯は [始点, 終点] で、横書きなら x、縦書きなら y の範囲。
 function marginZones() {
   if (!textColumn) return null;
-  const vw = innerWidth;
+  const vertical = textColumn.vertical === true;
+  const extent = vertical ? innerHeight : innerWidth;
+  const start = vertical ? textColumn.top : textColumn.left;
+  const end = vertical ? textColumn.bottom : textColumn.right;
   const zones = [];
-  if (textColumn.left - MARGIN_PAD >= MIN_ZONE) zones.push([4, textColumn.left - MARGIN_PAD]);
-  if (vw - textColumn.right - MARGIN_PAD >= MIN_ZONE) {
-    zones.push([textColumn.right + MARGIN_PAD, vw - 4]);
-  }
-  return zones.length ? zones : null;
+  if (start - MARGIN_PAD >= MIN_ZONE) zones.push([4, start - MARGIN_PAD]);
+  if (extent - end - MARGIN_PAD >= MIN_ZONE) zones.push([end + MARGIN_PAD, extent - 4]);
+  return zones.length ? { vertical, zones } : null;
 }
 
 // 星の出現位置。日常(fullField=false)は余白から。余白が無いページでは
-// 全幅に出すが小さく控えめにする(scale)。
+// 全幅に出すが小さく控えめにする(scale)。yPct が無いときは呼び手が縦位置を決める。
 function spawnPos(fullField) {
   if (fullField) return { xPct: Math.random() * 100, scale: 1 };
-  const zones = marginZones();
-  if (!zones) return { xPct: Math.random() * 100, scale: 0.55 };
-  const z = zones[Math.floor(Math.random() * zones.length)];
-  const x = z[0] + Math.random() * (z[1] - z[0]);
-  return { xPct: (x / innerWidth) * 100, scale: 1 };
+  const m = marginZones();
+  if (!m) return { xPct: Math.random() * 100, scale: 0.55 };
+  const z = m.zones[Math.floor(Math.random() * m.zones.length)];
+  const v = z[0] + Math.random() * (z[1] - z[0]);
+  if (m.vertical) {
+    return { xPct: Math.random() * 100, yPct: (v / innerHeight) * 100, scale: 1 };
+  }
+  return { xPct: (v / innerWidth) * 100, scale: 1 };
 }
 
 function makeStar({ sizeMin, sizeMax, scale, delaySpread, palette = 'silver' }) {
@@ -462,7 +486,7 @@ function burst(
     const pos = spawnPos(fullField);
     const s = makeStar({ sizeMin, sizeMax, scale: pos.scale, delaySpread, palette });
     s.style.left = `${pos.xPct}%`;
-    s.style.top = `${Math.random() * 100}%`;
+    s.style.top = `${pos.yPct ?? Math.random() * 100}%`;
     parent.append(s);
     setTimeout(() => s.remove(), (2 + delaySpread) * 1000 + 200);
   }
@@ -486,6 +510,9 @@ export function createOverlay() {
   const style = document.createElement('style');
   style.textContent = CSS;
   shadow.append(style);
+  const curl = document.createElement('canvas');
+  curl.className = 'curl';
+  shadow.append(curl);
   // きらきら用の全画面レイヤー。クリック・スクロールは素通し。
   const field = document.createElement('div');
   field.className = 'field';
@@ -658,7 +685,7 @@ export function createOverlay() {
       count = Math.round(count * demoFactor);
       const pos = spawnPos(false);
       const baseX = (pos.xPct / 100) * innerWidth;
-      const baseY = (10 + Math.random() * 80) * (innerHeight / 100);
+      const baseY = ((pos.yPct ?? 10 + Math.random() * 80) / 100) * innerHeight;
       for (let i = 0; i < count; i += 1) {
         const s = makeStar({ sizeMin: 5, sizeMax: 13, scale: pos.scale, delaySpread: 0.35, palette });
         s.style.left = `${baseX + (Math.random() - 0.5) * 44}px`;
@@ -859,6 +886,11 @@ export function createOverlay() {
       });
 
       shadow.append(fab, box);
+    },
+
+    /** 紙のめくれ(pagecurl.js)を描く canvas と、ページの背景色・明るいか。 */
+    curlLayer() {
+      return { canvas: curl, color: pageBackground(), light: pageLight };
     },
 
     destroy() {

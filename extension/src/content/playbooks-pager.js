@@ -1,0 +1,115 @@
+// Play ブックスのページ表示を読む小さな見張り(loader.js経由で、Play ブックスの全フレームに注入される)。
+//
+// リーダー下部のページ表示(例「11 / 17」、見開きは「4-5 / 17」)だけを読み、本の中での位置を報告する。
+// ページ表示・スライダー・送りボタンは最上位(play.google.com)ではなく、その中の
+// books.googleusercontent.com のフレームにある。どのフレームに来るかを決め打ちしないよう
+// 全フレームで動かし、ページ表示が見つかったフレームだけが報告する。
+// 本文の段落からは、ページ送りのたびに要素が作り直されるため位置を正しく出せない。
+//
+// このファイルの制約: ページを改変しない(読むだけ)。セッション中だけ注入され、rs_stop で止まる。
+
+const { Msg } = await import(
+  chrome.runtime.getURL('src/shared/events.js') + new URL(import.meta.url).search
+);
+
+const PAGE_LABEL = /^\s*(\d+)(?:\s*[-–]\s*(\d+))?\s*\/\s*(\d+)\s*$/;
+const POLL_MS = 1_500;
+// 本文のページ。中の「1/2」などをページ表示と取り違えないよう、丸ごと見ない(走査も軽くなる)
+const BOOK_PAGE = 'READER-RENDERED-PAGE';
+
+/**
+ * 画面に見えている文字。ページ表示は読み上げ用の「Page 17 of 17」と見た目の「17」「 / 17」
+ * (aria-hidden)を同じ要素に持つので、aria-hidden の子があればそちらだけをつなぐ。
+ */
+function visibleText(el) {
+  const shown = el.querySelectorAll('[aria-hidden="true"]');
+  return shown.length ? [...shown].map((s) => s.textContent).join('') : el.textContent;
+}
+
+/**
+ * 「数字 / 数字」だけのテキストを探す(クラス名に頼らない — 画面の作りが変わっても拾えるように)。
+ * 文書順で後に来る一致(=より内側の要素)を採る。見つからなければスライダーの aria 値を使う。
+ */
+function readPosition() {
+  let found = null;
+  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT, {
+    acceptNode: (el) =>
+      el.tagName === BOOK_PAGE ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT,
+  });
+  for (let el = walker.nextNode(); el; el = walker.nextNode()) {
+    const t = el.textContent;
+    if (!t || t.length > 60) continue; // 読み上げ用の文言を含んでも短い
+    const m = visibleText(el).match(PAGE_LABEL);
+    if (m) found = { page: Number(m[2] ?? m[1]), total: Number(m[3]) }; // 見開きは後ろのページ
+  }
+  if (!found) {
+    const slider = document.querySelector('[role="slider"][aria-valuemax]');
+    const now = Number(slider?.getAttribute('aria-valuenow'));
+    const max = Number(slider?.getAttribute('aria-valuemax'));
+    if (Number.isFinite(now) && max > 0) found = { page: now, total: max };
+  }
+  if (!found || !(found.total > 0) || found.page < 0 || found.page > found.total) return null;
+  return found;
+}
+
+/** 「次のページ」ボタンが押せない=最後のページ(英語UIは Next、日本語UIは 次)。 */
+function nextButtonDisabled() {
+  for (const b of document.querySelectorAll('button, [role="button"]')) {
+    if (!/next|次/i.test(b.getAttribute('aria-label') ?? '')) continue;
+    if (b.disabled || b.getAttribute('aria-disabled') === 'true') return true;
+  }
+  return false;
+}
+
+function sliderAtEnd() {
+  const slider = document.querySelector('[role="slider"][aria-valuemax]');
+  const now = Number(slider?.getAttribute('aria-valuenow'));
+  const max = Number(slider?.getAttribute('aria-valuemax'));
+  return Number.isFinite(now) && max > 0 && now >= max;
+}
+
+function send(event, payload) {
+  try {
+    chrome.runtime.sendMessage({ type: Msg.REPORT, event, payload });
+  } catch {
+    /* 拡張のリロード等でコンテキストが消えた場合 */
+  }
+}
+
+// 読了の判定: 最後のページに「進んで」着いた瞬間だけ1回報告する。ページ表示は戻る途中で
+// 最終ページを示すことがあるので、直近の移動が前向きのときに限る(戻ったときは出さない)。
+let last = '';
+let lastPage = null;
+let movedForward = false;
+let endReported = false;
+
+function check() {
+  const pos = readPosition();
+  if (pos) {
+    const key = `${pos.page}/${pos.total}`;
+    if (key !== last) {
+      last = key;
+      if (lastPage !== null) movedForward = pos.page > lastPage;
+      lastPage = pos.page;
+      send('book_progress', pos);
+    }
+  }
+  const atEnd = (pos && pos.page >= pos.total) || sliderAtEnd() || nextButtonDisabled();
+  if (!endReported && movedForward && atEnd) {
+    endReported = true;
+    send('book_end', pos ?? {});
+  }
+}
+
+const timer = setInterval(check, POLL_MS);
+check();
+
+function stop() {
+  clearInterval(timer);
+  window.__readingScaffoldLoaded = false;
+}
+
+chrome.runtime.onMessage.addListener((msg) => {
+  if (msg?.type === 'rs_stop') stop();
+});
+addEventListener('pagehide', stop, { once: true });

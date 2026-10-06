@@ -7,8 +7,145 @@ import {
   getAllQuestions,
   getAllQuizAttempts,
   getAllQuizzes,
+  getAllReadings,
   getAllSessions,
 } from './store.js';
+
+const BOOK_READER = 'https://play.google.com/books/reader';
+// 残り時間を出すのに要る、ペースの素材(前へ進んだページ数の合計)の最小値
+const MIN_PACE_PAGES = 3;
+
+/** pages の1行が Play ブックスの本か(本は id= 単位で1行。docs/data-design.md §1)。 */
+export function isBookPage(page) {
+  return (page.url ?? '').startsWith(BOOK_READER);
+}
+
+/** ページごとの読んだ回数を、同じ回数が続く区間にまとめる(帯の塗り)。 */
+function coverageRuns(readings, total) {
+  const counts = new Array(total).fill(0);
+  for (const r of readings) {
+    const from = Math.max(1, r.range.from);
+    const to = Math.min(total, r.range.furthest);
+    for (let p = from; p <= to; p += 1) counts[p - 1] += 1;
+  }
+  const runs = [];
+  counts.forEach((count, i) => {
+    const last = runs[runs.length - 1];
+    if (count === 0) return;
+    if (last && last.count === count && last.to === i) last.to = i + 1;
+    else runs.push({ from: i + 1, to: i + 1, count });
+  });
+  return runs;
+}
+
+/**
+ * 本棚(ダッシュボード用)。本ごとに位置・残り時間・読んだ区間・余白(問いとクイズ)をまとめる。
+ * 記録カテゴリの表示: 事実だけ。残り時間はその本での自分のペースから出す(他人と比べない)。
+ *
+ * @returns {Promise<Array<{
+ *   page_id, url, title, last_read_at, total_read_min,
+ *   finished: boolean, finished_at: number|null,
+ *   position: number|null, total: number|null, remaining_min: number|null,
+ *   runs: Array<{ from, to, count }>,
+ *   readings: Array<{ started_at, from, to, read_min }>,
+ *   marks: Array<{ kind: 'question'|'quiz', page: number|null, t, text, selection?, answer?, attempts? }>,
+ * }>>}
+ */
+export async function buildBookshelf() {
+  const [pages, readings, quizzes, attempts, questions] = await Promise.all([
+    getAllPages(),
+    getAllReadings(),
+    getAllQuizzes(),
+    getAllQuizAttempts(),
+    getAllQuestions(),
+  ]);
+  const attemptsByQuiz = new Map();
+  for (const a of attempts) {
+    const list = attemptsByQuiz.get(a.quiz_id) ?? [];
+    list.push(a);
+    attemptsByQuiz.set(a.quiz_id, list);
+  }
+
+  const books = pages.filter(isBookPage).map((p) => {
+    const rs = readings
+      .filter((r) => r.page_id === p.page_id && r.range?.total > 0)
+      .sort((a, b) => a.started_at - b.started_at);
+    const latest = rs[rs.length - 1];
+    const total = p.book_position?.total ?? latest?.range.total ?? null;
+    const position = p.book_position?.page ?? latest?.range.to ?? null;
+    // 読了: v0.19 以降は finished_at。それ以前の本は読了率(Play ブックスでは本の中の到達点)で見る
+    const finished = Boolean(p.finished_at) || (p.best_completion_pct ?? 0) >= 100;
+
+    // その本での自分のペース(前へ進んだページあたりの読書時間)
+    let pacePages = 0;
+    let paceMs = 0;
+    for (const r of rs) {
+      const advanced = r.range.furthest - r.range.from;
+      if (advanced > 0) {
+        pacePages += advanced;
+        paceMs += r.read_ms ?? 0;
+      }
+    }
+    const remainingMin =
+      !finished && total && position !== null && pacePages >= MIN_PACE_PAGES
+        ? Math.ceil(((total - position) * (paceMs / pacePages)) / 60_000)
+        : null;
+
+    const marks = [
+      ...questions
+        .filter((q) => q.page_id === p.page_id)
+        .map((q) => ({
+          kind: 'question',
+          page: q.book_page ?? null,
+          t: q.created_at,
+          text: q.question,
+          selection: q.selection ?? null,
+          answer: q.answer ?? null,
+        })),
+      ...quizzes
+        .filter((q) => q.page_id === p.page_id)
+        .map((q) => ({
+          kind: 'quiz',
+          page: q.book_page ?? null,
+          t: q.created_at,
+          text: q.question,
+          answer: q.choices?.[q.answer_index] ?? null,
+          attempts: (attemptsByQuiz.get(q.quiz_id) ?? [])
+            .sort((a, b) => (a.answered_at ?? 0) - (b.answered_at ?? 0))
+            .map((a) => a.correct),
+        })),
+    ].sort((a, b) => (a.page ?? Infinity) - (b.page ?? Infinity) || a.t - b.t); // 位置なしは末尾
+
+    return {
+      page_id: p.page_id,
+      url: p.url,
+      title: p.title,
+      last_read_at: p.last_read_at,
+      total_read_min: Math.round((p.total_read_ms ?? 0) / 60_000),
+      finished,
+      finished_at: p.finished_at ?? null,
+      position,
+      total,
+      remaining_min: remainingMin,
+      runs: total ? coverageRuns(rs, total) : [],
+      readings: rs
+        .map((r) => ({
+          started_at: r.started_at,
+          from: r.range.from,
+          to: r.range.furthest,
+          read_min: Math.round((r.read_ms ?? 0) / 60_000),
+        }))
+        .reverse(),
+      marks,
+    };
+  });
+
+  // 読みかけを上に(最後に読んだ順)、読み終えた本はその下
+  return books.sort(
+    (a, b) =>
+      Number(a.finished) - Number(b.finished) || (b.last_read_at ?? 0) - (a.last_read_at ?? 0),
+  );
+}
 
 /**
  * @returns {Promise<Array<{
@@ -63,6 +200,7 @@ export async function buildQuizLog() {
     .sort((a, b) => (b.created_at ?? 0) - (a.created_at ?? 0))
     .map((q) => ({
       quiz_id: q.quiz_id,
+      page_id: q.page_id ?? null,
       question: q.question,
       choices: q.choices,
       answer_index: q.answer_index,
@@ -139,9 +277,13 @@ export async function buildTotals() {
     readMs += s.read_ms ?? 0;
     if ((s.hints_shown ?? 0) === 0 && (s.effects_shown ?? 0) === 0) unassistedMs += s.read_ms ?? 0;
   }
+  const books = pages.filter(isBookPage);
   return {
     sessions: sessions.length,
-    pages: pages.length,
+    books: books.length,
+    books_finished: books.filter((p) => p.finished_at || (p.best_completion_pct ?? 0) >= 100)
+      .length,
+    articles: pages.length - books.length,
     read_min: Math.round(readMs / 60_000),
     unassisted_min: Math.round(unassistedMs / 60_000),
     quiz_total: attempts.length,

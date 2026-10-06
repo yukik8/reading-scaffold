@@ -38,6 +38,8 @@ import {
   putPage,
   addQuizAttempt,
   getAllSessions,
+  getEventsBySession,
+  putReading,
   sha256Hex,
 } from './store.js';
 import {
@@ -49,6 +51,10 @@ import {
 } from './controller.js';
 
 const CURRENT_KEY = 'currentSession';
+// 本の中の位置(Play ブックス)。currentSession とは別キーに置く — currentSession は複数の
+// ハンドラが読んで書き戻すので、ページ送りの直後に古い写しで上書きされうる。位置は
+// book_progress だけが書くので、別キーなら取りこぼさない。
+const BOOK_POS_KEY = 'bookPosition';
 export const WATCHDOG_ALARM = 'rs-watchdog';
 
 export async function getCurrent() {
@@ -61,12 +67,54 @@ function setCurrent(session) {
   return chrome.storage.session.set({ [CURRENT_KEY]: session });
 }
 
+/** このセッションの本の中の位置 { from, page, furthest, total }。無ければ null。 */
+async function readBookPos(sessionId) {
+  const got = await chrome.storage.session.get(BOOK_POS_KEY);
+  const pos = got[BOOK_POS_KEY];
+  return pos && pos.session_id === sessionId ? pos : null;
+}
+
+/** 今のセッションで開いている本のページ { page, total }(クイズ・問いの記録用)。無ければ null。 */
+export async function getBookPosition() {
+  const session = await getCurrent();
+  const pos = session ? await readBookPos(session.session_id) : null;
+  return pos ? { page: pos.page, total: pos.total } : null;
+}
+
 function domainOf(url) {
   try {
     return new URL(url).hostname;
   } catch {
     return null;
   }
+}
+
+/** Google Play ブックスのリーダー(本文は books.googleusercontent.com のフレームの中にある)。 */
+function isPlayBooksReader(url) {
+  try {
+    const u = new URL(url);
+    return u.hostname === 'play.google.com' && u.pathname.startsWith('/books/reader');
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 「同じ読み物か」を判定するキー。Play ブックスはページを送るたびに pg= が変わるので、
+ * 本の id= だけで識別する(ページ送りでセッションを切らない・本ごとに記録を分ける)。
+ */
+function pageKey(url) {
+  if (isPlayBooksReader(url)) {
+    const u = new URL(url);
+    const id = u.searchParams.get('id');
+    if (id) return `${u.origin}${u.pathname}?id=${id}`;
+  }
+  return url.split('#')[0];
+}
+
+/** Play ブックスのタブのタイトル「書名 - Google Play Books」から書名だけを取り出す。 */
+function bookTitle(tabTitle) {
+  return tabTitle.replace(/\s*[-–—|]\s*Google\s*Play\s*(?:Books|ブックス)\s*$/i, '').trim();
 }
 
 /** ユーザージェスチャー起点(popup)でのみ呼ばれる。activeTab権限の発動条件を兼ねる。 */
@@ -91,10 +139,11 @@ export async function startSession(tabId) {
 
   const state = await getState();
   const now = Date.now();
+  const playBooks = isPlayBooksReader(tab.url);
 
-  // 記録層: URL正規化(クエリ・フラグメント除去)→ page_id
+  // 記録層: URL正規化(クエリ・フラグメント除去。Play ブックスは本の id= だけ残す)→ page_id
   const u = new URL(tab.url);
-  const normalizedUrl = u.origin + u.pathname;
+  const normalizedUrl = playBooks ? pageKey(tab.url) : u.origin + u.pathname;
   const pageId = await sha256Hex(normalizedUrl);
 
   const session = {
@@ -102,8 +151,10 @@ export async function startSession(tabId) {
     tab_id: tabId,
     window_id: tab.windowId,
     // タブ内遷移の判定にだけ使う。storage.session限りで、IndexedDBには書かない。
-    page_url: tab.url.split('#')[0],
+    page_url: pageKey(tab.url),
     page_id: pageId,
+    // 'play_books' は本文を外部サーバへ送らない(著作権のある本のため。生成は Nano のみ)
+    site: playBooks ? 'play_books' : 'web',
     state: SessionState.ACTIVE,
     started_at: now,
     last_event_at: now,
@@ -149,7 +200,7 @@ export async function startSession(tabId) {
     total_read_ms: 0,
     best_completion_pct: 0,
   };
-  if (tab.title) page.title = tab.title;
+  if (tab.title) page.title = (playBooks && bookTitle(tab.title)) || tab.title;
   page.last_read_at = now;
   await putPage(page);
 
@@ -157,9 +208,11 @@ export async function startSession(tabId) {
   // GET_STATUSでθを取りに来るため、先に注入するとセッション未保存の瞬間に
   // 問い合わせが届いて θ=0 になる(ヒントが一枚も出なくなる)。
   // モジュールを直接注入できないためローダーを挟む。
+  // Play ブックスは本文が別ドメインのフレームにあるので全フレームへ入れ、
+  // 本文のないフレームではローダーが何もせずに戻る。
   try {
     await chrome.scripting.executeScript({
-      target: { tabId },
+      target: { tabId, allFrames: playBooks },
       files: ['src/content/loader.js'],
     });
   } catch (err) {
@@ -230,6 +283,38 @@ export async function endSession(reason) {
     longest_streak_ms: session.longest_streak_ms ?? 0,
   });
 
+  // 記録層: 読んだ区間(Play ブックスで位置が読めたセッションだけ)
+  const endedAt = Date.now();
+  const bookPos = await readBookPos(session.session_id);
+  await chrome.storage.session.remove(BOOK_POS_KEY);
+  // 最後のページに着いた: ページ表示が総ページに届いたか、pager が終わりを報告したか
+  const reachedEnd = bookPos
+    ? bookPos.furthest >= bookPos.total || Boolean(session.book_end_at)
+    : false;
+  if (bookPos && session.page_id) {
+    try {
+      const events = await getEventsBySession(session.session_id);
+      await putReading({
+        session_id: session.session_id,
+        page_id: session.page_id,
+        date: dateKey(session.started_at),
+        started_at: session.started_at,
+        ended_at: endedAt,
+        range: {
+          from: bookPos.from,
+          to: bookPos.page,
+          furthest: bookPos.furthest,
+          total: bookPos.total,
+        },
+        page_turns: events.filter((e) => e.type === EventType.PAGE_TURN).length,
+        read_ms: session.read_ms,
+        reached_end: reachedEnd,
+      });
+    } catch {
+      /* 記録失敗は終了処理を妨げない */
+    }
+  }
+
   // 記録層: pagesへ累計を積む
   if (session.page_id) {
     try {
@@ -238,7 +323,9 @@ export async function endSession(reason) {
         page.read_count += 1;
         page.total_read_ms += session.read_ms;
         page.best_completion_pct = Math.max(page.best_completion_pct, session.completion_pct);
-        page.last_read_at = Date.now();
+        page.last_read_at = endedAt;
+        if (bookPos) page.book_position = { page: bookPos.page, total: bookPos.total };
+        if (reachedEnd && !page.finished_at) page.finished_at = endedAt;
         await putPage(page);
       }
     } catch {
@@ -349,6 +436,47 @@ export async function onReport(event, payload, sender) {
       }
       break;
 
+    case 'book_progress': {
+      // Play ブックス: 本全体での位置(playbooks-pager.js が読むページ表示「11 / 17」から)。
+      // 読了率は本の中での到達点。本文フレームにも渡し、ヒントの「%」に使わせる。
+      const page = Number(payload.page);
+      const total = Number(payload.total);
+      if (session.site !== 'play_books' || !(total > 0) || !(page >= 0 && page <= total)) return;
+      const pct = Math.round((page / total) * 100);
+      // 記録層: 読んだ区間の素材(開始位置・最も先まで)。別キーに置く(BOOK_POS_KEY の注)
+      const pos = await readBookPos(session.session_id);
+      await chrome.storage.session.set({
+        [BOOK_POS_KEY]: {
+          session_id: session.session_id,
+          from: pos?.from ?? page,
+          page,
+          furthest: Math.max(pos?.furthest ?? page, page),
+          total,
+        },
+      });
+      session.book_pct = pct;
+      session.completion_pct = Math.max(session.completion_pct, pct);
+      try {
+        await chrome.tabs.sendMessage(session.tab_id, { type: 'rs_progress', pct });
+      } catch {
+        /* 本文フレームが応答しなければ次のページ表示の変化で届く */
+      }
+      break;
+    }
+
+    case 'book_end':
+      // Play ブックス: 最後のページに進んで着いた(ページ表示のあるフレームが1回だけ報告する)。
+      // 読了として到達点を100%にし、本文フレームに読了フィナーレを頼む。
+      if (session.site !== 'play_books' || session.book_end_at) return;
+      session.book_end_at = now;
+      session.completion_pct = 100;
+      try {
+        await chrome.tabs.sendMessage(session.tab_id, { type: 'rs_book_end' });
+      } catch {
+        /* 本文フレームが応答しなければそれでよい */
+      }
+      break;
+
     case EventType.SCROLL:
       session.completion_pct = Math.max(session.completion_pct, payload.completion_pct ?? 0);
       await appendEvent(session.session_id, EventType.SCROLL, {
@@ -453,12 +581,32 @@ export async function onTabRemoved(tabId) {
 /**
  * セッションタブ内の別ページへの遷移。v0は1セッション=1記事なので終了扱い。
  * ハッシュだけの変化(記事内の脚注・目次ジャンプ)は遷移とみなさない。
+ * Play ブックスのページ送り(pg= の変化)は同じ本の中の移動として、終了ではなく
+ * page_turn として記録する。
  */
 export async function onTabUpdated(tabId, changeInfo) {
   const session = await getCurrent();
   if (!session || tabId !== session.tab_id || !changeInfo.url) return;
-  if (changeInfo.url.split('#')[0] === session.page_url) return;
+  if (pageKey(changeInfo.url) === session.page_url) {
+    if (session.site === 'play_books') await onPageTurn(session);
+    return;
+  }
   await endSession(EndReason.CLOSE);
+}
+
+/**
+ * ページ送りは読んでいる証拠なので無操作の判定を延ばし、content scriptにも伝える
+ * (送りボタンは最上位のフレームにあり、本文フレームからは操作が見えないため)。
+ */
+async function onPageTurn(session) {
+  session.last_event_at = Date.now();
+  await appendEvent(session.session_id, EventType.PAGE_TURN, {});
+  await setCurrent(session);
+  try {
+    await chrome.tabs.sendMessage(session.tab_id, { type: 'rs_page_turn' });
+  } catch {
+    /* 本文フレームが応答しなければそれでよい */
+  }
 }
 
 /** 30秒ごとの見回り。無操作3分/復帰なし3分の自動終了はここで判定する。 */

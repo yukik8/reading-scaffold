@@ -182,3 +182,56 @@ export async function nanoAnswer({ question, selection, context }) {
     source_index: Number.isInteger(out.source_index) ? out.source_index : -1,
   };
 }
+
+const TRIVIA_SCHEMA = {
+  type: 'object',
+  properties: {
+    text: { type: 'string' },
+    term: { type: 'string' },
+    kind: { type: 'string', enum: ['word', 'reading', 'fact'] },
+    sure: { type: 'boolean' },
+  },
+  required: ['text', 'term', 'kind', 'sure'],
+  additionalProperties: false,
+};
+
+/**
+ * くまのうんちくの指示(Nano とサーバで同じ内容。サーバの main.py も一緒に直す)。
+ * 2026-10-07: 楽長の口ずさみ「トォテテ テテテイ」に意味をでっち上げたので、擬音・口ずさみ・名前・造語を禁止し、
+ * 辞書・事典で確かめられることだけに絞った。
+ */
+export const TRIVIA_SYSTEM =
+  'あなたは読書アプリのマスコット「くま」。読者がさっき読んだ本文から、「へぇ」となるうんちくを1つだけ話す。' +
+  '話題にしてよいのは次のどちらかだけ: (1)本文に出てきた、国語辞典に載っている言葉のうち、今では見慣れない言葉・古い言い回し・難しい漢字の意味や読み、' +
+  '(2)本文に出てきた実在の物・場所・習慣について、百科事典で確かめられる事実。' +
+  '次のものは絶対に話題にしない: 擬音語・擬態語・鳴き声、歌やメロディーの口ずさみ(カタカナの音の並びなど)、人や動物の名前、作者の造語、' +
+  '本文の文脈から推測しないと意味が分からない言葉。辞書や事典で確かめられる意味でなければ、推測で意味を言わない。' +
+  '少しでも自信がなければ sure を false にし、text を空文字にする。黙るのは失敗ではない。' +
+  '本文の先の展開・結末・登場人物のその後には触れない。本文の要約・感想・教訓・読者を褒める言葉・アドバイスは書かない。' +
+  'くまの口調でやさしく短く、1〜2文・全体で60字以内(例:「〜なんだって!」「〜らしいよ」)。' +
+  'term には話題にした本文中の言葉をそのまま入れる(なければ空文字)。' +
+  'kind は word(言葉の意味)・reading(漢字の読み)・fact(事実)のどれか。sure は辞書・事典で確かめられると言い切れるときだけ true。';
+
+/**
+ * 擬音や口ずさみらしい言葉(カタカナ/ひらがなだけで、同じ音や2音の繰り返し・空白を含むか、「っ」で終わる)。
+ * 「トォテテ テテテイ」「ボーボー」「がぶがぶ」「ぱたっ」ははじき、「セロ」「ヴァイオリン」「キャベツ」は通す。
+ */
+export function looksLikeSound(term) {
+  const t = String(term ?? '').trim();
+  if (!t || !/^[\u3040-\u30ff\u30fc\s\u3000・]+$/.test(t)) return false;
+  return /(.)\1/.test(t) || /(..)\1/.test(t) || /\s/.test(t) || /[っッ]$/.test(t);
+}
+
+/** うんちくの出力を検める。言い切れないもの・擬音らしいもの・長すぎるものは捨てる(null)。 */
+export function acceptTrivia(out) {
+  const text = typeof out?.text === 'string' ? out.text.trim() : '';
+  const term = typeof out?.term === 'string' ? out.term.trim() : '';
+  if (!text || text.length > 90 || out?.sure !== true) return null;
+  if (looksLikeSound(term)) return null;
+  return { text, term: term.slice(0, 20) };
+}
+
+/** 読み終えたページの本文から、くまのうんちくを1つ。話せることが無ければ null。 */
+export async function nanoTrivia(text) {
+  return acceptTrivia(await promptJson(TRIVIA_SYSTEM, `さっき読んだ本文:\n---\n${text}`, TRIVIA_SCHEMA));
+}

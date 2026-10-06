@@ -3,12 +3,13 @@
 // 3層構造(docs/data-design.md):
 //   計測層: events(append-only) / sessions(集計キャッシュ)
 //   制御層: state(単一レコード・連続θ)
-//   記録層: pages / quizzes / quiz_attempts(読書メモリ=本人の資産。ローカルのみ)
+//   記録層: pages(本) / readings(読んだ区間) / quizzes / quiz_attempts / questions
+//           (読書メモリ=本人の資産。ローカルのみ)
 
 import { THETA_MAX } from '../shared/config.js';
 
 const DB_NAME = 'reading-scaffold';
-const DB_VERSION = 3;
+const DB_VERSION = 4;
 
 let dbPromise = null;
 
@@ -57,6 +58,12 @@ export function openDb() {
           autoIncrement: true,
         });
         questions.createIndex('by_page', 'page_id');
+      }
+      // v4: 読んだ区間(1セッション=1行。本の中のどこを読んだか。docs/data-design.md §2.2)
+      if (!db.objectStoreNames.contains('readings')) {
+        const readings = db.createObjectStore('readings', { keyPath: 'session_id' });
+        readings.createIndex('by_page', 'page_id');
+        readings.createIndex('by_started', 'started_at');
       }
     };
     req.onsuccess = () => resolve(req.result);
@@ -113,6 +120,13 @@ export function putSession(session) {
 
 export function getAllSessions() {
   return run('sessions', 'readonly', (s) => s.getAll()).then((rows) => rows ?? []);
+}
+
+/** 1セッションの生イベント(古い順)。 */
+export function getEventsBySession(sessionId) {
+  return run('events', 'readonly', (s) => s.index('by_session').getAll(sessionId)).then(
+    (rows) => rows ?? [],
+  );
 }
 
 // ---- 制御層 ---------------------------------------------------------------
@@ -194,11 +208,29 @@ export function getAllQuestions() {
   return run('questions', 'readonly', (s) => s.getAll()).then((rows) => rows ?? []);
 }
 
+/** 読んだ区間(記録層)。1セッション=1行。 */
+export function putReading(reading) {
+  return run('readings', 'readwrite', (s) => s.put(reading));
+}
+
+export function getAllReadings() {
+  return run('readings', 'readonly', (s) => s.getAll()).then((rows) => rows ?? []);
+}
+
 // ---- 削除 -----------------------------------------------------------------
 
 /** データ削除。設定から1タップで呼ぶ。記録層(資産)も含めて全消去する。 */
 export async function wipeAll() {
-  for (const store of ['events', 'sessions', 'state', 'pages', 'quizzes', 'quiz_attempts', 'questions']) {
+  for (const store of [
+    'events',
+    'sessions',
+    'state',
+    'pages',
+    'readings',
+    'quizzes',
+    'quiz_attempts',
+    'questions',
+  ]) {
     await run(store, 'readwrite', (s) => s.clear());
   }
   await chrome.storage.session.clear();

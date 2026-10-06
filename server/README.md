@@ -27,6 +27,7 @@ echo 'ANTHROPIC_API_KEY=sk-ant-...' > .env                             # 鍵は�
 | `GET /healthz` | 生存確認 |
 | `POST /quiz` | `{paragraph_text}` → 三択の理解問題(JSON)。同一段落はキャッシュから返す |
 | `POST /ask` | `{question, selection?, context[]}` → 短い回答(2〜3文)+根拠段落番号。読了済み段落だけを根拠にする |
+| `POST /trivia` | `{paragraph_text}` → くまのうんちく1つ(言葉の意味など確かなことだけ・60字以内)。自信がなければ `ok: false`。同一本文はキャッシュから返す |
 
 受け取らないもの: 生イベントログ、記事本文の保存(受けた段落は保存もログもしない)、
 URL全体、ページタイトル、アカウント情報。
