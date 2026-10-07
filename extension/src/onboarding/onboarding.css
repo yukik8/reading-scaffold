@@ -188,3 +188,26 @@ h2 {
 .back:hover {
   color: var(--ink);
 }
+
+/* 外部送信の同意(任意・既定オフ) */
+.consent {
+  margin-top: 28px;
+  padding-top: 18px;
+  border-top: 1px solid var(--faint);
+}
+
+.consent-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+}
+
+.consent-row input {
+  accent-color: var(--gold);
+}
+
+.choices li:focus-visible {
+  outline: 2px solid var(--gold);
+  outline-offset: 2px;
+}

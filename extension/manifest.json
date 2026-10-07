@@ -1,11 +1,10 @@
 {
   "manifest_version": 3,
   "name": "reading-scaffold (dev)",
-  "version": "0.20.0",
-  "description": "補助が自動で減っていく読書拡張。セッション中のみ読書時間を計測する。",
-  "permissions": ["activeTab", "scripting", "tabs", "storage", "alarms"],
+  "version": "0.21.0",
+  "description": "Google Play ブックスで読む時間を、補助が自動で減っていく演出で支える読書拡張。計測は「読む」を押した間だけ。",
+  "permissions": ["scripting", "storage", "alarms"],
   "host_permissions": [
-    "http://127.0.0.1:8787/*",
     "https://play.google.com/books/*",
     "https://books.googleusercontent.com/books/*"
   ],
@@ -21,7 +20,7 @@
   "web_accessible_resources": [
     {
       "resources": ["src/content/*.js", "src/shared/*.js"],
-      "matches": ["<all_urls>"]
+      "matches": ["https://play.google.com/*", "https://books.googleusercontent.com/*"]
     }
   ]
 }

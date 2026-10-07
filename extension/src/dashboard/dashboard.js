@@ -3,8 +3,16 @@
 // θ変更と全消去だけはSW経由(進行中セッションへの反映・後片付けがSWの仕事なので)。
 
 import { Msg } from '../shared/events.js';
-import { THETA_MAX, GOALS, PASS, readDemoFlag, writeDemoFlag } from '../shared/config.js';
-import { seedDemoData } from './demo-seed.js';
+import {
+  THETA_MAX,
+  GOALS,
+  PASS,
+  IS_STORE_BUILD,
+  readDemoFlag,
+  writeDemoFlag,
+  readServerConsent,
+  writeServerConsent,
+} from '../shared/config.js';
 import { bearSVG } from '../content/bear.js';
 import { buildMirror } from '../background/mirror.js';
 import { buildKpi } from '../background/kpi.js';
@@ -550,6 +558,15 @@ $('export').addEventListener('click', async () => {
   URL.revokeObjectURL(a.href);
 });
 
+// うんちくのサーバ利用(本人の同意・既定オフ)。切り替えると次のうんちくから効く。
+readServerConsent().then((on) => {
+  $('consent').checked = on;
+});
+$('consent').addEventListener('change', () => writeServerConsent($('consent').checked));
+
+// 開発用の欄(θの手動上書き・デモ・デモデータ投入)はストア版では出さない
+$('dev-tools').hidden = IS_STORE_BUILD;
+
 // デモモード(このプロフィール限定・storage.local)。切り替えると次のセッションから効く。
 async function refreshDemoUI() {
   const on = await readDemoFlag();
@@ -565,6 +582,7 @@ refreshDemoUI();
 $('seed-demo').addEventListener('click', async () => {
   if (!confirm('約10週間分の玄人デモ履歴を投入します(既存データに追記されます)。')) return;
   $('seed-demo').disabled = true;
+  const { seedDemoData } = await import('./demo-seed.js'); // 開発用。ストア版では読み込まない
   await seedDemoData();
   await render();
   $('seed-demo').disabled = false;
@@ -579,26 +597,25 @@ $('ai-check').addEventListener('click', async () => {
   let msg;
   if (!d.hasApi) {
     msg =
-      'このChromeにPrompt APIがありません。Chrome 138以降に更新し、必要なら ' +
-      'chrome://flags/#prompt-api-for-gemini-nano を有効化してください。';
+      'このChromeには内蔵AI(Prompt API)がありません。Chrome 138以降に更新してください。' +
+      '内蔵AIが無いとクイズと問いへの答えは出ません(演出と計測は動きます)。';
   } else if (d.availability === 'unavailable') {
     msg =
-      'この端末では内蔵AIを使えません(空きディスク約22GB・対応GPU/RAMが必要)。' +
-      'クイズはローカルサーバがあればそちら経由で出ます。';
+      'この端末では内蔵AIを使えません(空きディスク約22GB・対応するGPUかメモリが必要)。' +
+      'クイズと問いへの答えは出ません。くまのうんちくは、上の「言葉を調べるサーバ」をオンにすると出ます。';
   } else if (d.created && d.sample) {
-    msg = `内蔵AIの準備ができました(応答: ${d.sample})。クイズと問いがこの端末内で完結します。`;
+    msg = '内蔵AIの準備ができました。クイズと問いへの答えは、この端末の中で作られます。';
   } else if (/space|disk|storage/i.test(d.createError ?? '')) {
     msg =
-      'モデルのダウンロードに空き容量が足りません(約22GB必要)。この端末では内蔵AIを' +
-      '使えないため、クイズと問いはローカルサーバ経由になります(server/.env に鍵を置いて起動)。' +
-      '22GB空ければ将来この端末でも完全オンデバイスにできます。';
+      'モデルのダウンロードに空き容量が足りません(約22GB必要)。空きを作ってから、もう一度押してください。' +
+      'それまではクイズと問いへの答えは出ません。';
   } else if (d.createError || d.promptError) {
     msg = `準備中に問題: ${d.createError ?? d.promptError}` +
       (d.downloadProgress >= 0 ? `(DL ${d.downloadProgress}%)` : '');
   } else {
     msg = `状態: ${d.availability}` +
       (d.downloadProgress >= 0 ? `・DL ${d.downloadProgress}%` : '') +
-      '。ダウンロード中の場合は完了後にもう一度お試しください。';
+      '。ダウンロード中の場合は、終わってからもう一度押してください。';
   }
   $('ai-status').textContent = msg;
   $('ai-check').disabled = false;

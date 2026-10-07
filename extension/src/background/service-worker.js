@@ -3,9 +3,10 @@
 // tabs系のハンドラはsession.jsの中で必ずセッションの存在を確認し、
 // セッションが無いときは何も読まず何も書かずに戻る — 「計測はセッション中のみ」。
 
-import { Msg, EventType } from '../shared/events.js';
-import { QUIZ, GOALS, DIAGNOSIS, PLAY_BOOKS_SERVER } from '../shared/config.js';
-import { nanoQuiz, nanoAnswer, nanoTrivia, acceptTrivia } from './ai.js';
+import { Msg, EventType, SessionState } from '../shared/events.js';
+import { GOALS, DIAGNOSIS, SERVER, IS_STORE_BUILD, readServerConsent } from '../shared/config.js';
+import { nanoQuiz, nanoAnswer, nanoTrivia, pickTerms } from './ai.js';
+import { serverTrivia, resetInstallId } from './server.js';
 import {
   startSession,
   endSession,
@@ -33,7 +34,34 @@ import {
   addQuestion,
   appendEvent,
 } from './store.js';
-import { getCurrent as getCurrentSession } from './session.js';
+
+/** 拡張自身のページ(popup・ダッシュボード・オンボーディング)からのメッセージか。 */
+function fromExtensionPage(sender) {
+  return sender.id === chrome.runtime.id && (sender.url ?? '').startsWith(chrome.runtime.getURL(''));
+}
+
+// 拡張のページだけが送れる操作(content script からは受けない — 読んでいるページに入った
+// スクリプトから、全消去やθの書き換えをさせない)
+const PAGE_ONLY = new Set([
+  Msg.START_SESSION,
+  Msg.END_SESSION,
+  Msg.SET_THETA,
+  Msg.COMPLETE_ONBOARDING,
+  Msg.SET_GOAL,
+  Msg.WIPE_ALL,
+  Msg.GET_LIBRARY,
+  Msg.GET_MIRROR,
+]);
+
+/**
+ * 生成の依頼は、いま計測中の Play ブックスのタブからだけ受ける(セッション外・別タブからは
+ * 何も作らない — 終わった後に届いた先読みも含めて)。条件に合わなければ null。
+ */
+async function sessionOf(sender) {
+  const current = await getCurrent();
+  if (!current || current.site !== 'play_books' || current.state === SessionState.ENDED) return null;
+  return sender.tab?.id === current.tab_id ? current : null;
+}
 
 // 新規インストール時だけオンボーディング(診断+目標選択)を開く。更新では開かない。
 chrome.runtime.onInstalled.addListener((details) => {
@@ -64,6 +92,10 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   (async () => {
+    if (PAGE_ONLY.has(msg?.type) && !fromExtensionPage(sender)) {
+      sendResponse({ ok: false, error: 'forbidden' });
+      return;
+    }
     switch (msg?.type) {
       case Msg.START_SESSION: {
         const session = await startSession(msg.tabId ?? sender.tab?.id);
@@ -89,6 +121,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         break;
 
       case Msg.SET_THETA:
+        // 開発用(θの手動上書き)。ストア版では受けない — θを動かすのは読書の実績だけ
+        if (IS_STORE_BUILD) {
+          sendResponse({ ok: false, error: 'forbidden' });
+          break;
+        }
         sendResponse({ ok: true, ...(await setTheta(msg.theta)) });
         break;
 
@@ -96,7 +133,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // 診断スコア→初期θのルックアップと保存。
         // 既にセッション実績かオンボーディング完了があるプロファイルでは、θを上書き
         // しない(進行中の漸減を診断のやり直しで壊さない)。目標と回答は常に更新する。
-        const answers = Array.isArray(msg.answers) ? msg.answers.map((v) => Number(v) || 0) : [];
+        // 各問 0〜2 点の整数に丸める(小数や範囲外で θ の表引きが壊れないように)
+        const answers = Array.isArray(msg.answers)
+          ? msg.answers.slice(0, 4).map((v) => Math.min(2, Math.max(0, Math.round(Number(v) || 0))))
+          : [];
         const score = answers.reduce((a, v) => a + v, 0);
         const state = await getState();
         const sessions = await getAllSessions();
@@ -130,59 +170,51 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         break;
 
       case Msg.QUIZ_REQUEST: {
-        // クイズ生成。第一候補はChrome内蔵AI(Gemini Nano) — 本文がデバイスの外に
-        // 出ない。使えなければローカルサーバへフォールバック(これが本文がページの
-        // 外に出る唯一の経路。サーバは保存もログもしない)。両方失敗なら静かに
-        // 諦め、content側は通常ヒントに戻る — クイズの都合で読書を壊さない。
+        // クイズ生成。端末内の Gemini Nano だけで作る — 本の本文は端末の外に出さない
+        // (Google Play の規約で、購入した本の送信・再配布は禁止)。作れなければ静かに諦め、
+        // content 側は何も出さない — クイズの都合で読書を壊さない。
+        const current = await sessionOf(sender);
         const text = (msg.paragraph_text ?? '').trim().slice(0, 2000);
-        // Play ブックスの本文を外部サーバへ送るかは設定で切り替える(著作物のため・β では同意が前提)
-        const serverAllowed =
-          PLAY_BOOKS_SERVER || (await getCurrentSession())?.site !== 'play_books';
-        let data = null;
-        const quiz = await nanoQuiz(text);
-        if (quiz) data = { ok: true, quiz, source: 'nano' };
-        if (!data && !serverAllowed) data = { ok: false, error: 'unavailable' };
-        if (!data) {
-          try {
-            const ctrl = new AbortController();
-            const timer = setTimeout(() => ctrl.abort(), QUIZ.timeoutMs);
-            const r = await fetch(QUIZ.endpoint, {
-              method: 'POST',
-              headers: { 'content-type': 'application/json' },
-              body: JSON.stringify({ paragraph_text: text }),
-              signal: ctrl.signal,
-            });
-            clearTimeout(timer);
-            data = await r.json();
-            if (data) data.source = 'server';
-          } catch {
-            data = { ok: false, error: 'unreachable' };
-          }
+        if (!current || text.length < 60) {
+          sendResponse({ ok: false, error: 'no-material' });
+          break;
         }
-        // 記録層: 出題されたクイズを保存(同一段落は再利用)。失敗しても表示は妨げない
-        if (data?.ok && data.quiz) {
-          try {
-            const hash = await sha256Hex(text);
-            const existing = await getQuizByHash(hash);
-            if (existing) {
-              data.quiz_id = existing.quiz_id;
-            } else {
-              const current = await getCurrentSession();
-              data.quiz_id = await addQuiz({
-                page_id: current?.page_id ?? null,
-                paragraph_hash: hash,
-                paragraph_excerpt: text.slice(0, 80),
-                // 出題した時点で開いていた本のページ(Play ブックス以外は null)
-                book_page: (await getBookPosition())?.page ?? null,
-                question: data.quiz.question,
-                choices: data.quiz.choices,
-                answer_index: data.quiz.answer_index,
-                created_at: Date.now(),
-              });
-            }
-          } catch {
-            /* 記録失敗は無視 */
-          }
+        // 記録層: 同じ段落から作ったクイズがあればそれを出す(作り直さない・回答の記録先がずれない)
+        const hash = await sha256Hex(text);
+        const existing = await getQuizByHash(hash).catch(() => null);
+        if (existing) {
+          sendResponse({
+            ok: true,
+            quiz: {
+              question: existing.question,
+              choices: existing.choices,
+              answer_index: existing.answer_index,
+            },
+            quiz_id: existing.quiz_id,
+            source: 'saved',
+          });
+          break;
+        }
+        const quiz = await nanoQuiz(text);
+        if (!quiz) {
+          sendResponse({ ok: false, error: 'unavailable' });
+          break;
+        }
+        const data = { ok: true, quiz, source: 'nano' };
+        try {
+          data.quiz_id = await addQuiz({
+            page_id: current.page_id ?? null,
+            paragraph_hash: hash,
+            paragraph_excerpt: text.slice(0, 80),
+            // 出題した時点で開いていた本のページ
+            book_page: (await getBookPosition())?.page ?? null,
+            question: quiz.question,
+            choices: quiz.choices,
+            answer_index: quiz.answer_index,
+            created_at: Date.now(),
+          });
+        } catch {
+          /* 記録失敗は表示を妨げない */
         }
         sendResponse(data);
         break;
@@ -191,7 +223,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       case Msg.ASK_REQUEST: {
         // 自分からの問い(道具カテゴリ・1問1答)。Nanoのみ — 本文と質問を外に出さない。
         // 回答に演出はつけない(質問をレバーにしない)。制御器にも一切入れない。
-        const current = await getCurrentSession();
+        const current = await sessionOf(sender);
         if (!current) {
           sendResponse({ ok: false, error: 'no-session' });
           break;
@@ -207,29 +239,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           sendResponse({ ok: false, error: 'empty' });
           break;
         }
-        // Nano優先(本文がデバイス外に出ない)。使えなければローカルサーバへ
-        // フォールバック。ただしサーバはAnthropic APIへ本文を転送する — この経路は
-        // ドッグフーディング用。βでは同意事項(docs/ask-and-nano-design.md §4)。
-        let res = await nanoAnswer({ question, selection, context });
-        // Play ブックスの本文を外部サーバへ送るかは設定で切り替える(クイズと同じ)
-        if (!res && (PLAY_BOOKS_SERVER || current.site !== 'play_books')) {
-          try {
-            const ctrl = new AbortController();
-            // 問いの回答はクイズより長くかかりうるので余裕をとる(12s→25s)
-            const timer = setTimeout(() => ctrl.abort(), 25_000);
-            const r = await fetch(QUIZ.askEndpoint, {
-              method: 'POST',
-              headers: { 'content-type': 'application/json' },
-              body: JSON.stringify({ question, selection, context }),
-              signal: ctrl.signal,
-            });
-            clearTimeout(timer);
-            const data = await r.json();
-            if (data?.ok) res = { answer: data.answer, source_index: data.source_index };
-          } catch {
-            /* サーバ不在。下でunavailableを返す */
-          }
-        }
+        const res = await nanoAnswer({ question, selection, context });
         if (!res) {
           sendResponse({ ok: false, error: 'unavailable' });
           break;
@@ -257,40 +267,31 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       }
 
       case Msg.TRIVIA_REQUEST: {
-        // くまのうんちく(読み終えたページから・道具ではなく演出の一部)。Nano優先、使えなければ
-        // サーバ(Play ブックスは設定次第)。話せることが無ければ ok:false で、content側は何も出さない。
+        // くまのうんちく(読み終えたページから・道具ではなく演出の一部)。
+        // 本人の同意があれば、端末で本文から選んだ「単語の候補」だけをサーバへ送り、辞書・事典の
+        // 知識が確かなモデルに話させる(本文・書名・URL は送らない)。同意が無い・サーバが黙った・
+        // 届かないときは端末内の Nano が本文から話す。どれも無理なら ok:false で何も出さない。
         // 文面は記録層にも計測層にも残さない(出したことだけを content 側が計測層に報告する)。
+        const current = await sessionOf(sender);
         const text = (msg.paragraph_text ?? '').trim().slice(0, 2000);
-        const current = await getCurrentSession();
         if (!current || text.length < 60) {
           sendResponse({ ok: false, error: 'no-material' });
           break;
         }
-        let trivia = await nanoTrivia(text);
-        if (!trivia && (PLAY_BOOKS_SERVER || current.site !== 'play_books')) {
-          try {
-            const ctrl = new AbortController();
-            const timer = setTimeout(() => ctrl.abort(), 20_000);
-            const r = await fetch(QUIZ.triviaEndpoint, {
-              method: 'POST',
-              headers: { 'content-type': 'application/json' },
-              body: JSON.stringify({ paragraph_text: text }),
-              signal: ctrl.signal,
-            });
-            clearTimeout(timer);
-            const data = await r.json();
-            if (data?.ok) trivia = acceptTrivia(data.trivia); // 擬音・言い切れないものは捨てる
-          } catch {
-            /* サーバ不在。下で unavailable を返す */
-          }
+        let trivia = null;
+        if (await readServerConsent()) {
+          trivia = await serverTrivia(pickTerms(text, { max: SERVER.maxTerms, maxChars: SERVER.maxTermChars }));
         }
+        if (!trivia) trivia = await nanoTrivia(text);
         sendResponse(trivia ? { ok: true, trivia } : { ok: false, error: 'unavailable' });
         break;
       }
 
       case Msg.WIPE_ALL:
-        await endSession('manual');
+        // 終了処理が失敗しても(記録の書き込みエラー等)、消去はやり切る
+        await endSession('manual').catch(() => {});
         await wipeAll();
+        await resetInstallId().catch(() => {});
         sendResponse({ ok: true });
         break;
 

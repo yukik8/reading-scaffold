@@ -1,7 +1,9 @@
 // Chrome内蔵AI(Gemini Nano / Prompt API)のラッパー。
 //
-// 本文がデバイスの外に出ない生成基盤(docs/ask-and-nano-design.md §4)。
-// 利用できなければnullを返し、呼び手がフォールバック(ローカルサーバ or 出さない)を選ぶ。
+// 本文がデバイスの外に出ない生成基盤。Play ブックスの本文を扱うのはここだけ
+// (Google Play の規約で、購入した本の送信・再配布は禁止)。
+// 利用できなければnullを返し、呼び手は何も出さない(うんちくだけは、同意があれば
+// pickTerms で選んだ単語だけをサーバへ送る — background/server.js)。
 // API: グローバルの LanguageModel。availability() → 'unavailable' | 'downloadable' |
 // 'downloading' | 'available'。構造化出力は responseConstraint(JSON Schema)。
 
@@ -138,7 +140,7 @@ const QUIZ_SCHEMA = {
 };
 
 /**
- * 段落から3択クイズを1問。生成できなければnull(呼び手がサーバへフォールバック)。
+ * 段落から3択クイズを1問。生成できなければnull(呼び手は何も出さない)。
  * 言葉の原則: 出題のみ。解説・褒め・アドバイスは書かせない。
  */
 export async function nanoQuiz(paragraphText) {
@@ -196,7 +198,8 @@ const TRIVIA_SCHEMA = {
 };
 
 /**
- * くまのうんちくの指示(Nano とサーバで同じ内容。サーバの main.py も一緒に直す)。
+ * くまのうんちくの指示(端末内の Nano 用。本文から話す)。
+ * サーバ(main.py)は本文を受け取らず単語の候補だけから話すので、指示は別だが禁止事項は揃えておく。
  * 2026-10-07: 楽長の口ずさみ「トォテテ テテテイ」に意味をでっち上げたので、擬音・口ずさみ・名前・造語を禁止し、
  * 辞書・事典で確かめられることだけに絞った。
  */
@@ -234,4 +237,58 @@ export function acceptTrivia(out) {
 /** 読み終えたページの本文から、くまのうんちくを1つ。話せることが無ければ null。 */
 export async function nanoTrivia(text) {
   return acceptTrivia(await promptJson(TRIVIA_SYSTEM, `さっき読んだ本文:\n---\n${text}`, TRIVIA_SCHEMA));
+}
+
+// ---- うんちくの単語の候補(サーバへ送るのはこれだけ) ---------------------------------
+
+// ありふれていて、うんちくにならない熟語(候補から外す)
+const COMMON = new Set(
+  (
+    '自分 今日 明日 昨日 時間 一人 二人 本当 先生 気持 一緒 仕事 人間 世界 言葉 何度 毎日 今度 大丈夫 ' +
+    '女性 男性 子供 部屋 場所 最後 最初 結局 少年 少女 自然 必要 問題 大事 一番 一度 全部 以上 以外 ' +
+    '無理 意味 存在 状態 理由 様子 相手 会社 学校 電話 家族 友達 両親 母親 父親 今夜 今朝 午前 午後 ' +
+    '一日 毎晩 何事 何人 一方 他人 手紙 時代 生活 自身 感情 気分 気配 表情 返事 途中 前後 左右 上下 ' +
+    '大人 東京 日本 外国 世間 自宅 本人 誰か 一体 全然 実際 普通 他人事 心配 安心 失礼 用事 準備'
+  ).split(' '),
+);
+const NUMERAL_ONLY = /^[一二三四五六七八九十百千万億兆〇零半数]+$/;
+
+/**
+ * 読み終えたページの本文から、うんちくの種になりそうな単語を数語だけ選ぶ(端末内で完結)。
+ * サーバへ送るのはこの単語の並びだけ — 文として読めず、本の中身の写しにならない量に留める。
+ * 候補: 漢字の熟語(2〜6字)・カタカナ語(3字以上。擬音らしいものは除く)・長めの英単語(小文字始まり)。
+ * 見慣れなさそうなもの(字数が多い・この範囲に1回だけ出る)を優先する。名前かどうかは
+ * 端末では分からないので、サーバ側の指示で避ける。
+ */
+export function pickTerms(text, { max = 8, maxChars = 16 } = {}) {
+  const src = String(text ?? '');
+  const count = new Map();
+  const add = (w, kind) => {
+    if (!w || w.length > maxChars) return;
+    const c = count.get(w);
+    if (c) c.n += 1;
+    else count.set(w, { w, kind, n: 1 });
+  };
+  for (const m of src.matchAll(/[\u4e00-\u9fff々〆]+/g)) {
+    const w = m[0].replace(/^第[一二三四五六七八九十百千]+/, ''); // 「第六交響曲」→「交響曲」
+    if (w.length >= 2 && w.length <= 6 && !COMMON.has(w) && !NUMERAL_ONLY.test(w)) add(w, 'kanji');
+  }
+  for (const m of src.matchAll(/[\u30a1-\u30faー]+/g)) {
+    const w = m[0];
+    if (w.length >= 3 && !looksLikeSound(w)) add(w, 'kana');
+  }
+  for (const m of src.matchAll(/(?<![A-Za-z])[a-z][a-z'-]{7,}(?![A-Za-z])/g)) add(m[0], 'latin');
+
+  const score = (c) => c.w.length * 2 + (c.n === 1 ? 2 : 0) - (c.n > 3 ? 3 : 0);
+  const ranked = [...count.values()].sort((a, b) => score(b) - score(a));
+  // 漢字・カタカナ・英語が偏らないように、種類ごとの上限をかけて取る
+  const cap = { kanji: 5, kana: 3, latin: 3 };
+  const out = [];
+  for (const c of ranked) {
+    if (out.length >= max) break;
+    if (cap[c.kind] <= 0) continue;
+    cap[c.kind] -= 1;
+    out.push(c.w);
+  }
+  return out;
 }

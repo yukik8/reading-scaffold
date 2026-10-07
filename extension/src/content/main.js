@@ -3,7 +3,8 @@
 // このファイルの制約:
 //   - ページDOMを変更しない。追加してよいのはShadow DOMに閉じたオーバーレイだけ。
 //   - 本文は読み取りのみ。再構成・広告除去はしない。
-//   - service workerへ送るのは計測値だけ。本文テキストは送らない(LLM経路はv0後半)。
+//   - service worker へ送るのは計測値と、クイズ・問い・うんちくの素材(読み終えた本文)。
+//     本文は SW の中で端末内の Nano にだけ渡り、端末の外へは出ない(うんちくのサーバへ送るのは単語の候補だけ)。
 
 // loader.jsが付けたキャッシュ割りクエリ(?t=...)を配下のモジュールにも伝播させる。
 // これがないと、拡張をリロードしても開きっぱなしのページでは古いモジュールが
@@ -23,6 +24,7 @@ const {
   FORESHADOW,
   CEILING,
   PAGE_CURL,
+  IS_STORE_BUILD,
   readDemoFlag,
 } = await mod('src/shared/config.js');
 const { createOverlay, setTextColumn, setDemoTheta, setDemoEnabled } =
@@ -290,6 +292,11 @@ let forewarnTicks = 0; // 先触れが続いたdwell tick数(発火保証用)
 let readMsSinceStimulus = 0; // 最後の演出からの実読書時間(天井用)
 
 const dwellTimer = setInterval(() => {
+  // 拡張が更新・再読み込みされると、このスクリプトは SW と切れたまま残る。演出や監視を残さず畳む
+  if (!chrome.runtime?.id) {
+    stop();
+    return;
+  }
   if (document.hidden) return; // 非表示タブの鼓動はSW側の状態機械と二重計上になるため送らない
   if (!isReading()) return;
   localReadMs += SESSION.dwellTickMs;
@@ -376,7 +383,7 @@ if (mode === 'full') {
     }
     if (!res?.ok) {
       const known = {
-        unavailable: 'この環境ではAIを呼び出せませんでした(内蔵AIが未対応・サーバ未起動)',
+        unavailable: 'この端末では内蔵AI(Gemini Nano)が使えないため、答えられませんでした',
         'no-session': '計測セッションが見つかりませんでした',
         empty: '質問が空です',
       };
@@ -709,6 +716,10 @@ const EVENTS_ON = PLAY_BOOKS && PAGE_EVENTS.enabled;
 const stage = createStage({ Paint, bearSVG });
 const stock = { quiz: null, trivia: null };
 const inFlight = { quiz: false, trivia: false };
+// 作れなかった後は数ページ空けてから作りに行く(Nano 不在・話せることが無いのに毎ページ頼まない)
+const retryAt = { quiz: 0, trivia: 0 };
+// ストックはこのページ送りの回数を過ぎたら古いとみなして捨てる(「さっきのページ」でなくなる)
+const STALE_TURNS = { quiz: 6, trivia: 4 };
 const shownTrivia = new Set(); // 同じうんちくを繰り返さない
 let lastBearAt = 0;
 let lastQuizAt = 0;
@@ -741,25 +752,51 @@ function glyphsFromReading() {
   return shuffled(pool).slice(0, 24);
 }
 
+/** 生成されたクイズの形を確かめる(問題文が文字列・選択肢3つ・正解の添字が 0〜2 の整数)。 */
+function validQuiz(q) {
+  return (
+    typeof q?.question === 'string' &&
+    q.question.trim() !== '' &&
+    Array.isArray(q.choices) &&
+    q.choices.length === 3 &&
+    q.choices.every((c) => typeof c === 'string' && c.trim() !== '') &&
+    Number.isInteger(q.answer_index) &&
+    q.answer_index >= 0 &&
+    q.answer_index < 3
+  );
+}
+
 async function prefetch(kind) {
   if (!EVENTS_ON || stopped || theta <= 0 || stock[kind] || inFlight[kind]) return;
+  if (pageTurns < retryAt[kind]) return;
   const text = readTextForEvents();
   if (text.length < PAGE_EVENTS.minTextChars) return;
   inFlight[kind] = true;
+  const turn = pageTurns;
   try {
     if (kind === 'quiz') {
       const res = await chrome.runtime.sendMessage({ type: Msg.QUIZ_REQUEST, paragraph_text: text });
-      if (res?.ok && res.quiz?.choices?.length >= 3) {
-        stock.quiz = { quiz: res.quiz, quiz_id: res.quiz_id ?? null };
+      if (res?.ok && validQuiz(res.quiz)) {
+        stock.quiz = { quiz: res.quiz, quiz_id: res.quiz_id ?? null, turn };
       }
     } else {
       const res = await chrome.runtime.sendMessage({ type: Msg.TRIVIA_REQUEST, paragraph_text: text });
-      if (res?.ok && res.trivia?.text && !shownTrivia.has(res.trivia.text)) stock.trivia = res.trivia;
+      if (res?.ok && res.trivia?.text && !shownTrivia.has(res.trivia.text)) {
+        stock.trivia = { text: res.trivia.text, term: res.trivia.term ?? '', turn };
+      }
     }
   } catch {
-    /* SW不在・生成失敗は静かに諦める(次のページ送りでまた試す) */
+    /* SW不在・生成失敗は静かに諦める */
   }
   inFlight[kind] = false;
+  if (!stock[kind]) retryAt[kind] = pageTurns + PAGE_EVENTS.retryAfterTurns;
+}
+
+/** 古くなったストックを捨てる(何ページも前に作ったものを「さっきのページ」として出さない)。 */
+function dropStale() {
+  for (const kind of ['quiz', 'trivia']) {
+    if (stock[kind] && pageTurns - stock[kind].turn > STALE_TURNS[kind]) stock[kind] = null;
+  }
 }
 
 /**
@@ -768,6 +805,7 @@ async function prefetch(kind) {
  */
 function maybePageEvent() {
   if (!EVENTS_ON || stopped || theta <= 0 || stage.modalOpen) return;
+  dropStale();
   if (pageTurns <= PAGE_EVENTS.minTurns) return;
   const now = Date.now();
   const scale = Math.min(1, theta / THETA_MAX) * (demoEnabled ? 2 : 1);
@@ -920,6 +958,7 @@ const curlTimer = pageCurl
 // ---- 片付け ---------------------------------------------------------------
 
 function stop({ celebrate = false, readMin = 0 } = {}) {
+  if (stopped) return; // 二重に畳まない(拡張の更新で切れた後に rs_stop が届く等)
   stopped = true;
   stage.close();
   clearInterval(dwellTimer);
@@ -1011,12 +1050,13 @@ watchNewPages();
 // Level/θ/バージョンを添えるのはドッグフーディング用: どの設定・どのコードで
 // 動いているかを一目で判別する(θ=0でヒントが出ないのは仕様、が見えるように)。
 if (mode === 'full') {
-  const ver = chrome.runtime.getManifest?.().version ?? '?';
-  const lv = sessionInfo ? `θ=${Number(theta).toFixed(1)}` : '設定未取得';
-  overlay.showNotice(
-    `計測をはじめました(本文 約${totalWords.toLocaleString()}語)· ${lv} · v${ver}`,
-    4_000,
-  );
+  // θと版はストア版では出さない(補助の量は本人に見せない — 気づかない速さで減らす設計)
+  let dev = '';
+  if (!IS_STORE_BUILD) {
+    const ver = chrome.runtime.getManifest?.().version ?? '?';
+    dev = ` · ${sessionInfo ? `θ=${Number(theta).toFixed(1)}` : '設定未取得'} · v${ver}`;
+  }
+  overlay.showNotice(`計測をはじめました(本文 約${totalWords.toLocaleString()}語)${dev}`, 4_000);
 } else {
   // 設計どおり: 本文検出に失敗したページは補助なしで計測のみ。
   overlay.showNotice('本文を検出できないため、このページでは計測のみ行います', 4_500);

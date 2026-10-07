@@ -1,35 +1,61 @@
-# server(v0後半)
+# server — くまのうんちくサーバ
 
-FastAPI。クイズ(理解連動Micro Content)と、自分からの問いへの回答をLLMに中継する。
-APIキーはサーバのみが持ち、拡張には渡さない。第一候補はChrome内蔵AI(Gemini Nano・
-完全オンデバイス)で、それが使えない環境のフォールバックがこのサーバ。
+FastAPI。役目は1つ: 拡張が端末で選んだ**単語の候補**(最大8語)から、くまのうんちくを1つ返す。
 
-## 起動
+- **本の本文・書名・URL は受け取らない。** Google Play の規約で購入した本の送信・再配布は禁止のため、
+  本文を扱うクイズと問いは端末内の Gemini Nano だけで作る(このサーバには `/quiz`・`/ask` は無い)。
+- 拡張がこのサーバを呼ぶのは、本人がオンボーディングかダッシュボードで「言葉を調べるサーバを使う」を
+  オンにしたときだけ(既定オフ)。
+- 受け取った単語も生成結果も保存しない。ログは1行 JSON で、状態・所要時間・トークン数だけ(単語は出さない)。
+- API キーはサーバだけが持ち、拡張には渡さない。
+
+## エンドポイント
+
+| | 入力 | 出力 |
+|---|---|---|
+| `GET /healthz` | — | `{"ok": true}` |
+| `POST /trivia` | ヘッダ `X-RS-Install: <UUID>`(拡張がインストールごとに作るランダムな ID)、本文 `{"terms": ["活動写真館", ...]}`(1〜8語・各16字まで) | `{"ok": true, "trivia": {"text", "term"}}`。話せることが無ければ `{"ok": false, "error": ...}` |
+
+`term` は必ず候補の中の1語。言い切れない(`sure: false`)・擬音らしい・90字超・URL 入りは返さない。
+ID が無いと 401、1日の上限を超えると 429。
+
+## 悪用と料金への備え
+
+公開サーバなので、誰でも叩ける前提で守っている。
+
+1. **1日の回数制限**(UTC の日付で区切る): インストールごと `RS_LIMIT_PER_INSTALL`(既定150)、
+   IP ごと `RS_LIMIT_PER_IP`(既定400)、全体 `RS_LIMIT_GLOBAL`(既定20000)。
+   Upstash Redis の環境変数があればそこで数え、無ければインスタンスのメモリで数える(目安にしかならない)。
+2. **入力の上限**: 8語・各16字まで。空白・記号・URL を含む語は捨てる。本文は受け付けない。
+3. **タイムアウト**: Anthropic 呼び出しは12秒・再試行1回(拡張は15秒で諦める)。関数の上限は30秒(`vercel.json`)。
+4. **最後の砦: Anthropic Console の利用額の上限。** このサーバ専用の workspace と API キーを作り、
+   月の上限額を設定しておく。
+5. ストア公開後、拡張の ID が決まったら `RS_ALLOWED_ORIGINS=chrome-extension://<id>` を入れると、
+   他のオリジンからの呼び出しを断る(偽装できるので補助)。
+
+## ローカルで起動
 
 ```bash
 cd server
 python3 -m venv .venv && ./.venv/bin/pip install -r requirements.txt   # 初回のみ
-echo 'ANTHROPIC_API_KEY=sk-ant-...' > .env                             # 鍵はここに(初回のみ)
+echo 'ANTHROPIC_API_KEY=sk-ant-...' > .env                             # 鍵はここに(初回のみ・コミットされない)
 ./.venv/bin/uvicorn main:app --port 8787
 ```
 
-`ANTHROPIC_API_KEY` は必須。`server/.env`(KEY=VALUE 形式)に置けば起動時に自動で
-読み込まれる — `export` は不要。`.env` は `.gitignore` 済みでコミットされない。
-`export ANTHROPIC_API_KEY=...` でシェルに直接入れてもよい(その場合はexportが優先)。
-未設定のままだと `/quiz`・`/ask` が `{"ok": false, "error": "TypeError"}`
-(認証方法を解決できない)を返す。
+開発中の拡張(パッケージ化されていないもの)は `http://127.0.0.1:8787` を呼ぶ。
+ストア版(manifest に `update_url` が付く)は本番の URL を呼ぶ(`extension/src/shared/config.js` の `SERVER`)。
 
-モデルは既定で `claude-opus-5`(環境変数 `RS_QUIZ_MODEL` で変更可)。
-分類器の誤検知に備えてサーバ側フォールバック(`fallbacks: "default"`)を有効化済み。
+## Vercel にデプロイ
 
-| エンドポイント | 役割 |
-|---|---|
-| `GET /healthz` | 生存確認 |
-| `POST /quiz` | `{paragraph_text}` → 三択の理解問題(JSON)。同一段落はキャッシュから返す |
-| `POST /ask` | `{question, selection?, context[]}` → 短い回答(2〜3文)+根拠段落番号。読了済み段落だけを根拠にする |
-| `POST /trivia` | `{paragraph_text}` → くまのうんちく1つ(言葉の意味など確かなことだけ・60字以内)。自信がなければ `ok: false`。同一本文はキャッシュから返す |
+1. Vercel でこのリポジトリを Import し、**Root Directory を `server`** にする(`main.py` の `app` が自動で入口になる)。
+2. Environment Variables(Production):
+   - `ANTHROPIC_API_KEY`(必須。上の専用キー)
+   - `RS_MODEL`(任意。既定 `claude-opus-5`)
+   - `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN`(任意・推奨。Marketplace の Upstash を繋ぐと入る)
+   - `RS_LIMIT_PER_INSTALL` / `RS_LIMIT_PER_IP` / `RS_LIMIT_GLOBAL`(任意)
+   - `RS_ALLOWED_ORIGINS`(ストア公開後)
+3. デプロイして `https://<本番ドメイン>/healthz` が `{"ok": true}` を返すことを確かめる。
+4. 本番ドメインが `reading-scaffold.vercel.app` でなければ、`extension/src/shared/config.js` の `SERVER.base` を直す。
+   拡張は Preview の URL(保護がかかっている)ではなく本番ドメインを呼ぶ。
 
-受け取らないもの: 生イベントログ、記事本文の保存(受けた段落は保存もログもしない)、
-URL全体、ページタイトル、アカウント情報。
-
-拡張側の挙動: サーバが落ちていても読書は壊れない(クイズ枠は静かに流れる)。
+`.env`・`.venv` は `.vercelignore` でアップロードしない。Python は 3.12(`.python-version`)。

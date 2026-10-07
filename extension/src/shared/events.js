@@ -50,8 +50,8 @@ export const Msg = {
   SET_THETA: 'set_theta', // θ手動ダイヤル(連続値。ドッグフーディング用、W3で自動化)
   SET_GOAL: 'set_goal', // 週次目標の選択(評価レイヤーのみ。制御器は読まない)
   COMPLETE_ONBOARDING: 'complete_onboarding', // 初回診断+目標選択の確定(θの初期配置)
-  QUIZ_REQUEST: 'quiz_request', // content→SW: 段落テキストからクイズ生成(Nano→サーバの順)
+  QUIZ_REQUEST: 'quiz_request', // content→SW: 段落テキストからクイズ生成(端末内の Nano のみ)
   ASK_REQUEST: 'ask_request', // content→SW: 自分からの問い(道具。Nanoのみ・1問1答)
-  TRIVIA_REQUEST: 'trivia_request', // content→SW: くまのうんちく(読み終えたページから。Nano→サーバの順)
+  TRIVIA_REQUEST: 'trivia_request', // content→SW: くまのうんちく(同意があれば単語の候補だけをサーバへ・なければ Nano)
   WIPE_ALL: 'wipe_all',
 };

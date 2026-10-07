@@ -467,7 +467,8 @@ details.override input[type='range'] {
   accent-color: var(--honey-deep);
 }
 
-.demo-toggle {
+.demo-toggle,
+.consent-toggle {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -476,8 +477,13 @@ details.override input[type='range'] {
   cursor: pointer;
 }
 
-.demo-toggle input {
+.demo-toggle input,
+.consent-toggle input {
   accent-color: var(--honey-deep);
+}
+
+.consent-toggle {
+  font-weight: 700;
 }
 
 /* ---- 週次グラフ: 補助なし=おひさま色、補助あり=淡い紙色 ---- */

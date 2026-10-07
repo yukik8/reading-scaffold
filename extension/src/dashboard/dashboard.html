@@ -110,16 +110,25 @@
       <section aria-label="データ">
         <span class="eyebrow">データ</span>
         <p class="note">
-          すべてこの端末のブラウザ内に保存されています。読んだページ・クイズ・生ログが
-          サーバへ送られることはありません。
+          記録はすべてこの端末のブラウザ内に保存されています。本の本文が端末の外へ送られることはありません。
+          クイズと問いへの答えは、この端末の内蔵AI(Gemini Nano)が作ります。
         </p>
+        <label class="consent-toggle">
+          <input id="consent" type="checkbox" />
+          <span>くまのうんちくに、言葉を調べるサーバを使う</span>
+        </label>
+        <p class="note">オンの間だけ、読み終えたページからこの端末で選んだ単語を数語(最大8語)、
+          reading-scaffold のサーバ経由で Anthropic の AI に送ります。本の本文・書名・URL は送りません。</p>
         <div class="actions">
           <button id="export" type="button">JSONでエクスポート</button>
           <button id="recalibrate" type="button">診断をやり直す</button>
+          <button id="ai-check" type="button">内蔵AIを確認・準備</button>
         </div>
+        <p id="ai-status" class="note"></p>
         <p class="note">診断のやり直しは目標と回答を更新するだけで、補助の量(θ)は変わりません。
           θを動かすのは読書の実績だけです。</p>
-        <details class="override">
+        <!-- 開発用。ストア版(update_url あり)では隠す -->
+        <details id="dev-tools" class="override">
           <summary>開発用</summary>
           <label class="demo-toggle">
             <input id="demo" type="checkbox" />
@@ -130,10 +139,8 @@
           <label class="override-label" for="theta">θを手動で上書き</label>
           <input id="theta" type="range" min="0" max="8" step="0.1" value="8" aria-label="補助量θ" />
           <div class="actions">
-            <button id="ai-check" type="button">内蔵AIを確認・準備</button>
             <button id="seed-demo" type="button" hidden>玄人デモデータを投入</button>
           </div>
-          <p id="ai-status" class="note"></p>
           <p id="s-report" class="note"></p>
         </details>
         <div class="danger">

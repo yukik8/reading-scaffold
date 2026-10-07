@@ -3,7 +3,7 @@
 // θの計算と保存はSW側(COMPLETE_ONBOARDING)。このページはUIだけを持つ。
 
 import { Msg } from '../shared/events.js';
-import { GOALS, DIAGNOSIS } from '../shared/config.js';
+import { GOALS, DIAGNOSIS, writeServerConsent } from '../shared/config.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -31,6 +31,19 @@ const answers = [];
 let currentQ = 0;
 let selectedGoal = null;
 
+/** 選択肢をキーボードでも選べるようにする(Tab で移動、Enter / Space で選ぶ)。 */
+function pressable(li, onPress) {
+  li.tabIndex = 0;
+  li.setAttribute('role', 'button');
+  li.addEventListener('click', onPress);
+  li.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      onPress();
+    }
+  });
+}
+
 function show(stepId) {
   for (const id of ['step-intro', 'step-quiz', 'step-goal', 'step-done']) {
     $(id).hidden = id !== stepId;
@@ -53,7 +66,7 @@ function renderQuestion(i) {
     name.textContent = label;
     li.append(name);
     if (answers[i] === value) li.classList.add('selected');
-    li.addEventListener('click', () => {
+    pressable(li, () => {
       answers[i] = value;
       li.classList.add('selected');
       // ひと呼吸おいて次へ(選んだ実感を残す)
@@ -64,6 +77,7 @@ function renderQuestion(i) {
     });
     list.append(li);
   });
+  list.firstElementChild?.focus();
 }
 
 function renderGoals() {
@@ -90,7 +104,7 @@ function renderGoals() {
     desc.textContent = g.desc;
     li.append(name, desc);
     if (key === selectedGoal) li.classList.add('selected');
-    li.addEventListener('click', () => {
+    pressable(li, () => {
       selectedGoal = key;
       for (const el of list.children) el.classList.remove('selected');
       li.classList.add('selected');
@@ -122,6 +136,7 @@ $('finish').addEventListener('click', async () => {
     /* SW不在など。下で案内する */
   }
   if (res?.ok) {
+    await writeServerConsent($('consent').checked);
     show('step-done');
   } else {
     // 黙って戻すと「終わった」と誤解して閉じてしまう。失敗は必ず見せる

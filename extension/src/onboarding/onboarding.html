@@ -15,7 +15,7 @@
       <!-- 導入 -->
       <section id="step-intro" class="step">
         <p class="lead">
-          読んでいるページの上に、小さな補助が出ます。<br />
+          Google Play ブックスで読んでいる間、小さな補助が出ます。<br />
           読めるようになるにつれ、補助は自動で減っていきます。
         </p>
         <p class="note">
@@ -40,6 +40,19 @@
         <h2>いまの目標を選んでください</h2>
         <p class="note">あとでダッシュボードからいつでも変えられます。目標は補助の量に影響しません。</p>
         <ul id="goals" class="choices"></ul>
+        <!-- 外部送信の同意(任意・既定オフ)。Chrome Web Store の開示・同意の要件 -->
+        <div class="consent">
+          <label class="consent-row">
+            <input id="consent" type="checkbox" />
+            <span>くまのうんちくに、言葉を調べるサーバを使う(任意)</span>
+          </label>
+          <p class="note">
+            オンにすると、読み終えたページからこの端末で選んだ単語を数語(最大8語)だけ、
+            reading-scaffold のサーバ経由で Anthropic の AI に送り、言葉の意味や由来を調べます。
+            本の本文・書名・URL は送りません。オフのままでも使えます(この端末の内蔵AIが使えれば、それで話します)。
+            あとでダッシュボードから変えられます。
+          </p>
+        </div>
         <div class="actions">
           <button id="finish" type="button">この目標で始める</button>
         </div>
@@ -50,8 +63,8 @@
       <section id="step-done" class="step" hidden>
         <p class="lead">準備ができました。</p>
         <p class="note">
-          読みたいページを開いて、ツールバーの拡張アイコンから「読む」を押すと始まります。<br />
-          記録はすべてこの端末の中に残り、外へは送られません。
+          Play ブックスで本を開いて、ツールバーの拡張アイコンから「読む」を押すと始まります。<br />
+          記録はすべてこの端末の中に残ります。本の本文が端末の外へ送られることはありません。
         </p>
         <div class="actions">
           <button id="close" type="button">閉じる</button>

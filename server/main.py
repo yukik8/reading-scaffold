@@ -1,256 +1,165 @@
-# reading-scaffold バックエンド(v0後半)。
-# 受け取るのは段落テキストのみ。保存もログ出力もしない(ローカルファースト原則)。
+# reading-scaffold のうんちくサーバ(Vercel / ローカルの uvicorn)。
+#
+# 役目は1つ: 拡張が端末で選んだ「単語の候補」(最大8語)から、くまのうんちくを1つ返す。
+# 本の本文・書名・URL は受け取らない(Google Play の規約で、購入した本の送信・再配布は禁止。
+# 本文を扱うクイズと問いは、端末内の Gemini Nano だけで作る)。
+# 受け取った単語も生成結果も保存しない。ログには状態とトークン数だけを出し、単語は出さない。
+#
+# 公開サーバなので、誰でも叩ける前提で守る:
+#   - インストールごとの ID(X-RS-Install)と IP ごとに、1日の回数を数える
+#   - サーバ全体の1日の上限(これを超えたら全員に断る)
+#   - 入力の長さ・語数の上限、Anthropic 呼び出しのタイムアウト
+#   - 料金の最後の砦は Anthropic Console 側の利用額の上限(server/README.md)
+# 回数は Upstash Redis(環境変数があれば)で数える。無ければインスタンスのメモリで数える(目安)。
 
-import hashlib
 import json
 import os
-import random
 import re
-import traceback
+import threading
+import time
+import uuid
 from collections import OrderedDict
+from typing import Annotated
 
 import anthropic
-from fastapi import FastAPI
-from pydantic import BaseModel
+import httpx
+from fastapi import FastAPI, Header, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 
 def _load_dotenv():
-    """.env を読み、未設定の環境変数だけ埋める(依存なしの最小実装)。
-    鍵をシェル履歴に残さず、`export` 無しで uvicorn を起動できるようにするため。
-    探索順: server/.env(main.pyと同じ場所) → リポジトリ直下の .env。
-    既に環境にある値は上書きしない(exportが優先)。"""
-    here = os.path.dirname(os.path.abspath(__file__))
-    candidates = [os.path.join(here, ".env"), os.path.join(here, "..", ".env")]
-    for path in candidates:
-        try:
-            with open(path, encoding="utf-8") as f:
-                for line in f:
-                    line = line.strip()
-                    if not line or line.startswith("#") or "=" not in line:
-                        continue
-                    key, _, value = line.partition("=")
-                    key = key.strip()
-                    value = value.strip().strip('"').strip("'")
-                    if key and key not in os.environ:
-                        os.environ[key] = value
-        except FileNotFoundError:
-            continue
+    """ローカル開発用: server/.env を読み、未設定の環境変数だけ埋める(依存なしの最小実装)。
+    Vercel では .env をアップロードしない(.vercelignore)。環境変数は Vercel の設定から入れる。"""
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+    try:
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, _, value = line.partition("=")
+                key = key.strip()
+                value = value.strip().strip('"').strip("'")
+                if key and key not in os.environ:
+                    os.environ[key] = value
+    except FileNotFoundError:
+        pass
 
 
 _load_dotenv()
 
-MODEL = os.environ.get("RS_QUIZ_MODEL", "claude-opus-5")
 
-app = FastAPI()
-# APIキーは環境変数 ANTHROPIC_API_KEY から解決される(未設定だと生成時にTypeError:
-# "Could not resolve authentication method"。起動シェルで必ず export すること)。
-client = anthropic.Anthropic()
-
-SYSTEM = """あなたは読書支援ツール「reading-scaffold」の出題エンジンです。
-与えられた本文の段落だけを根拠に、読者の理解を確かめる三択問題を1問だけ作ります。
-
-原則:
-- 問題文と選択肢は、段落本文と同じ言語で書く(英語の段落なら英語で、日本語なら日本語で)
-- 段落に書かれている内容のみから出題する(外部知識やこの先の内容を要求しない)
-- 読者を試すためではなく、理解を確かめて自信を持たせるための問題にする
-- 責めない: ひっかけ・重箱の隅・曖昧な選択肢を作らない
-- 教えない: 解説・教訓・褒め言葉は一切書かない。問題と選択肢だけで完結させる
-- 簡潔に: 問題文は60字以内、選択肢は各30字以内を目安にする
-
-出力は指定のJSONスキーマに従う。answer_index は正解の添字(0-2)。"""
-
-QUIZ_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "question": {"type": "string"},
-        "choices": {"type": "array", "items": {"type": "string"}},
-        "answer_index": {"type": "integer"},
-    },
-    "required": ["question", "choices", "answer_index"],
-    "additionalProperties": False,
-}
-
-# 同一段落への再出題はキャッシュから(設計ドキュメント: キャッシュ必須)
-_cache: OrderedDict[str, dict] = OrderedDict()
-CACHE_MAX = 512
-
-
-class QuizRequest(BaseModel):
-    paragraph_text: str
-    article_context: str | None = None
-
-
-class AskContext(BaseModel):
-    i: int
-    text: str
-
-
-class AskRequest(BaseModel):
-    question: str
-    selection: str | None = None
-    context: list[AskContext] = []
-
-
-ASK_SYSTEM = """あなたは読書支援ツール「reading-scaffold」の伴走者です。
-読者が読書中に投げた問いに、渡された「読了済みの段落」だけを根拠に短く答えます。
-
-原則(「照らす、答えない」):
-- 必ず2〜3文で短く答える。長い説明・要約はしない
-- 読者がまだ読んでいない先の内容には触れない(ネタバレ禁止)。渡された段落の範囲で答える
-- 読書から連れ出さない: 雑談に応じない・話を広げない・次の問いを促さない
-- 根拠になった段落があれば、その番号を source_index に返す(無ければ -1)
-- 問いと同じ言語で答える
-
-出力は指定のJSONスキーマに従う。"""
-
-ASK_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "answer": {"type": "string"},
-        "source_index": {"type": "integer"},
-    },
-    "required": ["answer", "source_index"],
-    "additionalProperties": False,
-}
-
-
-@app.get("/healthz")
-def healthz():
-    return {"ok": True, "model": MODEL}
-
-
-@app.post("/ask")
-def ask(req: AskRequest):
-    question = req.question.strip()[:300]
-    if len(question) < 2:
-        return {"ok": False, "error": "too_short"}
-
-    ctx = "\n\n".join(f"[{c.i}] {c.text[:800]}" for c in req.context[:8])
-    selection = (req.selection or "").strip()[:500]
-    user = ""
-    if selection:
-        user += f"読者が選択している本文: {selection}\n\n"
-    user += f"問い: {question}\n\n読了済みの段落:\n{ctx}"
-
+def _int_env(name: str, default: int) -> int:
     try:
-        resp = client.beta.messages.create(
-            model=MODEL,
-            max_tokens=512,
-            system=ASK_SYSTEM,
-            betas=["server-side-fallback-2026-07-01"],
-            extra_body={"fallbacks": "default"},
-            output_config={
-                "effort": "low",
-                "format": {"type": "json_schema", "schema": ASK_SCHEMA},
-            },
-            messages=[{"role": "user", "content": user}],
-        )
-    except anthropic.APIError as e:
-        return {"ok": False, "error": type(e).__name__}
-    except Exception as e:
-        traceback.print_exc()
-        return {"ok": False, "error": type(e).__name__}
-
-    if resp.stop_reason == "refusal":
-        return {"ok": False, "error": "refusal"}
-
-    block = next((b for b in resp.content if b.type == "text"), None)
-    if block is None:
-        return {"ok": False, "error": "empty"}
-    try:
-        data = json.loads(block.text)
-    except json.JSONDecodeError:
-        return {"ok": False, "error": "bad_json"}
-
-    answer = data.get("answer")
-    if not isinstance(answer, str) or not answer.strip():
-        return {"ok": False, "error": "empty_answer"}
-    idx = data.get("source_index")
-    if not isinstance(idx, int):
-        idx = -1
-    return {"ok": True, "answer": answer.strip(), "source_index": idx}
+        return int(os.environ.get(name, default))
+    except ValueError:
+        return default
 
 
-@app.post("/quiz")
-def quiz(req: QuizRequest):
-    text = req.paragraph_text.strip()[:2000]
-    if len(text) < 60:
-        return {"ok": False, "error": "too_short"}
+MODEL = os.environ.get("RS_MODEL") or os.environ.get("RS_QUIZ_MODEL") or "claude-opus-5"
+# 1日の上限(日本時間ではなく UTC の日付で区切る)
+LIMIT_PER_INSTALL = _int_env("RS_LIMIT_PER_INSTALL", 150)
+LIMIT_PER_IP = _int_env("RS_LIMIT_PER_IP", 400)
+LIMIT_GLOBAL = _int_env("RS_LIMIT_GLOBAL", 20000)
+# 拡張の ID を固定したいとき(ストア公開後): カンマ区切りの chrome-extension://<id>
+ALLOWED_ORIGINS = [o.strip() for o in os.environ.get("RS_ALLOWED_ORIGINS", "").split(",") if o.strip()]
 
-    key = hashlib.sha256(text.encode()).hexdigest()
-    if key in _cache:
-        _cache.move_to_end(key)
-        return {"ok": True, "quiz": _cache[key], "cached": True}
+app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 
-    try:
-        resp = client.beta.messages.create(
-            model=MODEL,
-            max_tokens=1024,
-            system=SYSTEM,
-            # 分類器がまれに拒否した場合もサーバ側で自動フォールバックさせる
-            betas=["server-side-fallback-2026-07-01"],
-            extra_body={"fallbacks": "default"},
-            output_config={
-                "effort": "low",
-                "format": {"type": "json_schema", "schema": QUIZ_SCHEMA},
-            },
-            messages=[
-                {
-                    "role": "user",
-                    "content": f"次の段落から三択問題を1問作ってください。\n\n{text}",
-                }
-            ],
-        )
-    except anthropic.APIError as e:
-        return {"ok": False, "error": type(e).__name__}
-    except Exception as e:  # 認証未設定等。拡張側はJSONを期待するので500にしない
-        traceback.print_exc()
-        return {"ok": False, "error": type(e).__name__}
+# 拡張の service worker からの fetch は chrome-extension:// オリジンの CORS 要求になる
+# (拡張にこのサーバの host 権限を付けていないため)。CORS はアクセス制御ではない — 守りは回数制限。
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=ALLOWED_ORIGINS,
+    allow_origin_regex=None if ALLOWED_ORIGINS else r"chrome-extension://[a-p]{32}",
+    allow_methods=["GET", "POST"],
+    allow_headers=["content-type", "x-rs-install"],
+    max_age=86400,
+)
 
-    if resp.stop_reason == "refusal":
-        return {"ok": False, "error": "refusal"}
-
-    block = next((b for b in resp.content if b.type == "text"), None)
-    if block is None:
-        return {"ok": False, "error": "empty"}
-    try:
-        data = json.loads(block.text)
-    except json.JSONDecodeError:
-        return {"ok": False, "error": "bad_json"}
-
-    choices = data.get("choices")
-    idx = data.get("answer_index")
-    if not isinstance(choices, list) or len(choices) != 3:
-        return {"ok": False, "error": "bad_choices"}
-    if not isinstance(idx, int) or not 0 <= idx < 3:
-        return {"ok": False, "error": "bad_answer_index"}
-
-    # 正解の位置の偏りを消すため、サーバ側でシャッフルする
-    order = [0, 1, 2]
-    random.shuffle(order)
-    data["choices"] = [choices[i] for i in order]
-    data["answer_index"] = order.index(idx)
-
-    _cache[key] = data
-    if len(_cache) > CACHE_MAX:
-        _cache.popitem(last=False)
-    return {"ok": True, "quiz": data}
+# 拡張は 15 秒で諦めるので、それより長く生成を続けて課金されないようにする
+client = anthropic.Anthropic(timeout=12.0, max_retries=1)
 
 
-# くまのうんちく(拡張の ai.js の TRIVIA_SYSTEM と同じ指示。片方を変えたらもう片方も)
+# ---- 回数制限 -----------------------------------------------------------------
+
+_REDIS_URL = os.environ.get("UPSTASH_REDIS_REST_URL") or os.environ.get("KV_REST_API_URL")
+_REDIS_TOKEN = os.environ.get("UPSTASH_REDIS_REST_TOKEN") or os.environ.get("KV_REST_API_TOKEN")
+_mem_counts: dict[str, int] = {}
+_mem_lock = threading.Lock()
+
+
+def _day() -> str:
+    return time.strftime("%Y%m%d", time.gmtime())
+
+
+def _incr(keys: list[str]) -> list[int] | None:
+    """キーごとに1日の回数を1増やして、増やした後の値を返す。数えられなければ None。"""
+    if _REDIS_URL and _REDIS_TOKEN:
+        try:
+            cmds = []
+            for k in keys:
+                cmds.append(["INCR", k])
+                cmds.append(["EXPIRE", k, "90000"])  # 25時間で消える
+            r = httpx.post(
+                f"{_REDIS_URL.rstrip('/')}/pipeline",
+                headers={"Authorization": f"Bearer {_REDIS_TOKEN}"},
+                json=cmds,
+                timeout=2.0,
+            )
+            r.raise_for_status()
+            out = r.json()
+            return [int(out[i * 2]["result"]) for i in range(len(keys))]
+        except Exception as e:  # Redis が落ちていたらメモリで数える(止めない)
+            print(json.dumps({"event": "ratelimit_redis_error", "error": type(e).__name__}))
+    with _mem_lock:
+        if len(_mem_counts) > 50000:  # 日をまたいだ古いキーを捨てる
+            today = _day()
+            for k in [k for k in _mem_counts if today not in k]:
+                del _mem_counts[k]
+        vals = []
+        for k in keys:
+            _mem_counts[k] = _mem_counts.get(k, 0) + 1
+            vals.append(_mem_counts[k])
+        return vals
+
+
+def _over_limit(install: str, ip: str) -> bool:
+    day = _day()
+    counts = _incr([f"rs:{day}:install:{install}", f"rs:{day}:ip:{ip}", f"rs:{day}:global"])
+    if counts is None:
+        return False
+    per_install, per_ip, total = counts
+    return per_install > LIMIT_PER_INSTALL or per_ip > LIMIT_PER_IP or total > LIMIT_GLOBAL
+
+
+def _client_ip(request: Request) -> str:
+    fwd = request.headers.get("x-forwarded-for", "")
+    if fwd:
+        return fwd.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
+# ---- うんちく -------------------------------------------------------------------
+
+# 拡張の ai.js の TRIVIA_SYSTEM(端末内の Nano 用・本文から話す)と禁止事項を揃える。片方を変えたらもう片方も。
 # 2026-10-07: 楽長の口ずさみ「トォテテ テテテイ」に意味をでっち上げたので、擬音・口ずさみ・名前・造語を禁止し、
-# 辞書・事典で確かめられることだけに絞った。言い切れないもの(sure=false)と擬音らしい言葉は返さない。
+# 辞書・事典で確かめられることだけに絞った。同日、本文を受け取らず単語の候補だけから話す形にした。
 TRIVIA_SYSTEM = (
-    "あなたは読書アプリのマスコット「くま」。読者がさっき読んだ本文から、「へぇ」となるうんちくを1つだけ話す。"
-    "話題にしてよいのは次のどちらかだけ: (1)本文に出てきた、国語辞典に載っている言葉のうち、今では見慣れない言葉・古い言い回し・難しい漢字の意味や読み、"
-    "(2)本文に出てきた実在の物・場所・習慣について、百科事典で確かめられる事実。"
-    "次のものは絶対に話題にしない: 擬音語・擬態語・鳴き声、歌やメロディーの口ずさみ(カタカナの音の並びなど)、人や動物の名前、作者の造語、"
-    "本文の文脈から推測しないと意味が分からない言葉。辞書や事典で確かめられる意味でなければ、推測で意味を言わない。"
-    "少しでも自信がなければ sure を false にし、text を空文字にする。黙るのは失敗ではない。"
-    "本文の先の展開・結末・登場人物のその後には触れない。本文の要約・感想・教訓・読者を褒める言葉・アドバイスは書かない。"
+    "あなたは読書アプリのマスコット「くま」。読者が読んでいる本のページから拾った単語の候補が渡される(本文は渡されない)。"
+    "候補の中から、国語辞典・百科事典に載っていて「へぇ」となる話ができる言葉を1つだけ選び、うんちくを1つ話す。"
+    "話してよいのは、辞書・事典で確かめられることだけ: 言葉の意味、今では見慣れない言い回し、難しい漢字の読み、言葉の由来・語源、"
+    "実在の物・場所・習慣についての事実。"
+    "次のものは絶対に選ばない: 擬音語・擬態語・鳴き声、歌やメロディーの口ずさみ(カタカナの音の並びなど)、"
+    "人や動物や登場人物の名前(名前かもしれない言葉も避ける)、作者の造語、ありふれていて話にならない言葉。"
+    "本の内容・あらすじ・登場人物は知らないものとして扱い、推測で触れない。読者を褒める言葉・感想・教訓・アドバイスは書かない。"
+    "少しでも自信がなければ sure を false にし、text と term を空文字にする。黙るのは失敗ではない。"
     "くまの口調でやさしく短く、1〜2文・全体で60字以内(例:「〜なんだって!」「〜らしいよ」)。"
-    "term には話題にした本文中の言葉をそのまま入れる(なければ空文字)。"
-    "kind は word(言葉の意味)・reading(漢字の読み)・fact(事実)のどれか。sure は辞書・事典で確かめられると言い切れるときだけ true。"
+    "term には選んだ言葉を候補の表記のまま入れる。"
+    "kind は word(言葉の意味)・reading(漢字の読み)・origin(由来)・fact(事実)のどれか。"
+    "sure は辞書・事典で確かめられると言い切れるときだけ true。"
 )
 
 TRIVIA_SCHEMA = {
@@ -258,15 +167,18 @@ TRIVIA_SCHEMA = {
     "properties": {
         "text": {"type": "string"},
         "term": {"type": "string"},
-        "kind": {"type": "string", "enum": ["word", "reading", "fact"]},
+        "kind": {"type": "string", "enum": ["word", "reading", "origin", "fact"]},
         "sure": {"type": "boolean"},
     },
     "required": ["text", "term", "kind", "sure"],
     "additionalProperties": False,
 }
 
-_KANA_ONLY = re.compile(r"^[\u3040-\u30ff\u30fc\s\u3000・]+$")
+_KANA_ONLY = re.compile(r"^[぀-ヿー\s　・]+$")
 _SOUNDISH = re.compile(r"(.)\1|(..)\2|\s|[っッ]$")
+# 1語として扱える文字だけ(文字・数字・長音・々・中黒・アポストロフィ・ハイフン)。空白や記号・URL は弾く
+_WORDLIKE = re.compile(r"^[\w・'\-]+$")
+_URLISH = re.compile(r"https?://|www\.|\.(?:com|net|org|jp|io)\b", re.I)
 
 
 def _looks_like_sound(term: str) -> bool:
@@ -275,41 +187,112 @@ def _looks_like_sound(term: str) -> bool:
     return bool(t) and bool(_KANA_ONLY.match(t)) and bool(_SOUNDISH.search(t))
 
 
-_trivia_cache: OrderedDict[str, dict] = OrderedDict()
+Term = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=16)]
+
+
+class TriviaRequest(BaseModel):
+    # 単語の候補以外(本文など)が付いてきたら受けない(黙って捨てずに 422 で知らせる)
+    model_config = ConfigDict(extra="forbid")
+    terms: list[Term] = Field(min_length=1, max_length=8)
+
+
+# 同じ候補の並びへの答え(話せなかったことも含む)。インスタンスごとのメモリ・目安
+_cache: OrderedDict[str, dict] = OrderedDict()
+_cache_lock = threading.Lock()
+CACHE_MAX = 2048
+
+
+def _cache_get(key: str) -> dict | None:
+    with _cache_lock:
+        if key in _cache:
+            _cache.move_to_end(key)
+            return _cache[key]
+    return None
+
+
+def _cache_put(key: str, value: dict) -> None:
+    with _cache_lock:
+        _cache[key] = value
+        _cache.move_to_end(key)
+        while len(_cache) > CACHE_MAX:
+            _cache.popitem(last=False)
+
+
+def _log(**fields) -> None:
+    """1行の JSON ログ。単語・生成文は出さない。"""
+    print(json.dumps({"event": "trivia", **fields}, ensure_ascii=False))
+
+
+@app.get("/healthz")
+def healthz():
+    return {"ok": True}
 
 
 @app.post("/trivia")
-def trivia(req: QuizRequest):
-    text = req.paragraph_text.strip()[:2000]
-    if len(text) < 60:
-        return {"ok": False, "error": "too_short"}
+def trivia(
+    req: TriviaRequest,
+    request: Request,
+    x_rs_install: str | None = Header(default=None),
+):
+    # インストール ID は拡張が作るランダムな UUID。無い・形が違うものは受けない
+    try:
+        install = str(uuid.UUID(x_rs_install or ""))
+    except ValueError:
+        return JSONResponse({"ok": False, "error": "no_install_id"}, status_code=401)
+    if ALLOWED_ORIGINS and request.headers.get("origin") not in ALLOWED_ORIGINS:
+        return JSONResponse({"ok": False, "error": "forbidden"}, status_code=403)
 
-    key = hashlib.sha256(text.encode()).hexdigest()
-    if key in _trivia_cache:
-        _trivia_cache.move_to_end(key)
-        return {"ok": True, "trivia": _trivia_cache[key], "cached": True}
+    terms: list[str] = []
+    for t in req.terms:
+        if _WORDLIKE.match(t) and not _URLISH.search(t) and not t.isdigit() and t not in terms:
+            terms.append(t)
+    if not terms:
+        return {"ok": False, "error": "no_terms"}
 
+    if _over_limit(install, _client_ip(request)):
+        _log(status="rate_limited")
+        return JSONResponse({"ok": False, "error": "rate_limited"}, status_code=429)
+
+    key = "\n".join(sorted(terms))
+    cached = _cache_get(key)
+    if cached is not None:
+        return cached
+
+    started = time.monotonic()
     try:
         resp = client.beta.messages.create(
             model=MODEL,
-            max_tokens=512,
+            max_tokens=2048,
             system=TRIVIA_SYSTEM,
+            # 分類器がまれに拒否した場合もサーバ側で自動フォールバックさせる
             betas=["server-side-fallback-2026-07-01"],
             extra_body={"fallbacks": "default"},
             output_config={
                 "effort": "medium",
                 "format": {"type": "json_schema", "schema": TRIVIA_SCHEMA},
             },
-            messages=[{"role": "user", "content": f"さっき読んだ本文:\n---\n{text}"}],
+            messages=[{"role": "user", "content": "単語の候補:\n" + "\n".join(f"- {t}" for t in terms)}],
         )
-    except anthropic.APIError as e:
-        return {"ok": False, "error": type(e).__name__}
-    except Exception as e:  # 認証未設定等。拡張側はJSONを期待するので500にしない
-        traceback.print_exc()
-        return {"ok": False, "error": type(e).__name__}
+    except anthropic.APIStatusError as e:
+        _log(status="api_error", http=e.status_code, request_id=getattr(e, "request_id", None))
+        return {"ok": False, "error": "unavailable"}
+    except Exception as e:  # タイムアウト・接続失敗・鍵の未設定など。中身は外へ返さない
+        _log(status="error", error=type(e).__name__)
+        return {"ok": False, "error": "unavailable"}
 
+    usage = getattr(resp, "usage", None)
+    _log(
+        status=resp.stop_reason,
+        ms=round((time.monotonic() - started) * 1000),
+        input_tokens=getattr(usage, "input_tokens", None),
+        output_tokens=getattr(usage, "output_tokens", None),
+        request_id=getattr(resp, "_request_id", None),
+    )
     if resp.stop_reason == "refusal":
         return {"ok": False, "error": "refusal"}
+    if resp.stop_reason == "max_tokens":
+        return {"ok": False, "error": "truncated"}  # 途中で切れた JSON は読まない
+
     block = next((b for b in resp.content if b.type == "text"), None)
     if block is None:
         return {"ok": False, "error": "empty"}
@@ -318,17 +301,21 @@ def trivia(req: QuizRequest):
     except json.JSONDecodeError:
         return {"ok": False, "error": "bad_json"}
 
+    out = _check(data, terms)
+    _cache_put(key, out)
+    return out
+
+
+def _check(data: dict, terms: list[str]) -> dict:
+    """生成されたうんちくを検める。言い切れない・候補に無い言葉・擬音らしい・長すぎる・URL入りは捨てる。"""
     said = str(data.get("text", "")).strip()
     term = str(data.get("term", "")).strip()
     if not said or data.get("sure") is not True:
         return {"ok": False, "error": "nothing_certain"}  # 自信がないときは黙る
+    if term not in terms:
+        return {"ok": False, "error": "unknown_term"}
     if _looks_like_sound(term):
         return {"ok": False, "error": "soundish_term"}  # 擬音・口ずさみには意味を付けない
-    if len(said) > 90:
-        return {"ok": False, "error": "too_long"}
-    out = {"text": said, "term": term[:20]}
-
-    _trivia_cache[key] = out
-    if len(_trivia_cache) > CACHE_MAX:
-        _trivia_cache.popitem(last=False)
-    return {"ok": True, "trivia": out}
+    if len(said) > 90 or _URLISH.search(said):
+        return {"ok": False, "error": "rejected_text"}
+    return {"ok": True, "trivia": {"text": said, "term": term}}

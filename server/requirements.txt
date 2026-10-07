@@ -1,3 +1,6 @@
-fastapi
-uvicorn[standard]
-anthropic
+# 動作確認した版に固定する(anthropic の output_config / server-side-fallback に依存しているため)
+fastapi==0.141.1
+anthropic==0.122.0
+httpx==0.28.1
+# ローカル起動用(Vercel では使わない)
+uvicorn==0.52.3

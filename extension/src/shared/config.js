@@ -44,6 +44,49 @@ export const DEMO = {
 
 const DEMO_KEY = 'demo_enabled';
 
+// ストア版(Chrome Web Store から入れたもの)の manifest には update_url が付き、
+// 開発中(パッケージ化されていない拡張)には付かない。ビルドなしで本番と開発を切り替える目印。
+// 開発用の機能(θの手動上書き・デモ・デモデータ投入・開始通知のθ表示)はストア版では出さない。
+export const IS_STORE_BUILD = (() => {
+  try {
+    return 'update_url' in chrome.runtime.getManifest();
+  } catch {
+    return false;
+  }
+})();
+
+// うんちくサーバ。受け取るのは端末で選んだ「単語の候補」だけで、本の本文は送らない
+// (Google Play の規約: 購入した本の送信・再配布は禁止。本文の処理は端末内の Nano だけ)。
+// 本番は Vercel。開発中はローカルの uvicorn(server/README.md)。
+// 拡張にこのオリジンの host 権限は付けない — サーバ側が chrome-extension:// に CORS を返す。
+export const SERVER = {
+  base: IS_STORE_BUILD ? 'https://reading-scaffold.vercel.app' : 'http://127.0.0.1:8787',
+  timeoutMs: 15_000,
+  maxTerms: 8, // 1回に送る単語の候補の上限
+  maxTermChars: 16, // 1語の長さの上限
+};
+
+// うんちくのために単語をサーバへ送ってよいか(本人の同意)。既定は送らない。
+// オンボーディングとダッシュボードで本人が選ぶ。同意が無ければ、うんちくは端末内の Nano だけで作る。
+const CONSENT_KEY = 'trivia_server_consent';
+
+export async function readServerConsent() {
+  try {
+    const r = await chrome.storage.local.get(CONSENT_KEY);
+    return r[CONSENT_KEY] === true;
+  } catch {
+    return false;
+  }
+}
+
+export async function writeServerConsent(value) {
+  try {
+    await chrome.storage.local.set({ [CONSENT_KEY]: value === true });
+  } catch {
+    /* 失敗は無視(次回の読みで「送らない」扱い) */
+  }
+}
+
 /** デモモードの現在値(プロフィールごと)。既定OFF。読めなければOFF扱い。 */
 export async function readDemoFlag() {
   try {
@@ -137,19 +180,15 @@ export const EFFECT_TIERS = {
   rare: { p: 0.12 }, // レア: 金の雨。約1/8
 };
 
-// クイズ(理解連動Micro Content)。ローカルのFastAPIサーバ経由でLLMが出題する。
+// クイズ(理解連動Micro Content)。端末内の Gemini Nano が本文から出題する(本文は端末の外に出さない)。
 // ヒント枠の一部がクイズに化ける形なので頻度はθ配下のまま。1セッション1問まで。
-// サーバが落ちていれば静かに何も出さない(読書を壊さない)。
+// Nano が使えなければ静かに何も出さない(読書を壊さない)。
 export const QUIZ = {
   enabled: true,
   // ヒント枠がクイズに化ける確率
   p: 0.3,
   // 読了済み段落がこれ未満なら出さない(素材不足)
   minParagraphsRead: 3,
-  endpoint: 'http://127.0.0.1:8787/quiz',
-  askEndpoint: 'http://127.0.0.1:8787/ask',
-  triviaEndpoint: 'http://127.0.0.1:8787/trivia',
-  timeoutMs: 12_000,
   // 正解時の演出の強さはθに連動(低Levelほど盛大に、卒業に向けて漸減):
   //   θ >= jackpotMinTheta → 大当たり(予告→縁光→特濃の雨+三波)
   //   θ >= rainMinTheta   → 金の雨
@@ -173,7 +212,9 @@ export const PAGE_EVENTS = {
   bear: { maxP: 0.35, minGapMs: 45_000, weights: { trivia: 0.65, peek: 0.35 } },
   afterQuizMs: 20_000, // クイズの直後はくまを出さない
   minTextChars: 120, // 出題・うんちくに使う読了済み本文の最低文字数
-  maxTextChars: 1_500, // 渡す本文の上限(サーバ経路では外部へ出る量)
+  maxTextChars: 1_500, // 端末内の Nano に渡す本文の上限(本文は端末の外に出さない)
+  // 素材が作れなかった(Nano 不在・話せることが無い)あと、次に作りに行くまで空けるページ送りの回数
+  retryAfterTurns: 3,
   // 正解・読了で「大当たり!!」「読了!!」の言葉を出す。言葉の原則(言葉で褒めない)を
   // この瞬間に限って緩める設定。false にすると光と動きだけになる。
   words: true,
@@ -187,10 +228,6 @@ export const PAGE_SHOWER = {
   enabled: false,
   maxP: 1, // θ=THETA_MAX のとき、1回のページ送りで降る確率
 };
-
-// Play ブックスでも、Nano が使えなければローカルサーバ経由で Anthropic に生成させる。
-// その場合、読み終えたページの本文の一部が外部へ出る(β では同意が前提・著作物の扱いを要決定)。
-export const PLAY_BOOKS_SERVER = true;
 
 // success := read_ms >= 5分 かつ escapes <= 1
 export const SUCCESS = {

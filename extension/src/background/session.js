@@ -117,25 +117,19 @@ function bookTitle(tabTitle) {
   return tabTitle.replace(/\s*[-–—|]\s*Google\s*Play\s*(?:Books|ブックス)\s*$/i, '').trim();
 }
 
-/** ユーザージェスチャー起点(popup)でのみ呼ばれる。activeTab権限の発動条件を兼ねる。 */
-export async function startSession(tabId) {
+/**
+ * ユーザージェスチャー起点(popup)でのみ呼ばれる。Play ブックス専用 — host 権限が
+ * Play ブックスにしか無いので、他のタブでは URL も読めない(tab.url が undefined)。
+ */
+async function startSessionImpl(tabId) {
   const existing = await getCurrent();
-  if (existing) await endSession(EndReason.MANUAL);
+  if (existing) await endSessionImpl(EndReason.MANUAL);
 
   const tab = await chrome.tabs.get(tabId);
-  const domain = domainOf(tab.url);
-  // http/https以外(chrome:// や拡張ページ等)は注入できない。生のChromeエラー
-  // (Cannot access a chrome-extension:// URL...)を出す前に、ここで止める。
-  const protocol = (() => {
-    try {
-      return new URL(tab.url).protocol;
-    } catch {
-      return null;
-    }
-  })();
-  if (!domain || (protocol !== 'http:' && protocol !== 'https:')) {
-    throw new Error('このページでは計測できません(通常のWebページで押してください)');
+  if (!tab.url || !isPlayBooksReader(tab.url)) {
+    throw new Error('Play ブックスで本を開いてから押してください');
   }
+  const domain = domainOf(tab.url);
 
   const state = await getState();
   const now = Date.now();
@@ -153,7 +147,7 @@ export async function startSession(tabId) {
     // タブ内遷移の判定にだけ使う。storage.session限りで、IndexedDBには書かない。
     page_url: pageKey(tab.url),
     page_id: pageId,
-    // 'play_books' は本文を外部サーバへ送らない(著作権のある本のため。生成は Nano のみ)
+    // 本文は端末の外へ出さない(Google Play の規約。生成は Nano のみ・うんちくは単語だけ)
     site: playBooks ? 'play_books' : 'web',
     state: SessionState.ACTIVE,
     started_at: now,
@@ -216,7 +210,7 @@ export async function startSession(tabId) {
       files: ['src/content/loader.js'],
     });
   } catch (err) {
-    await setCurrent(null); // 注入できないページ(chrome://等)。セッションを残さない
+    await setCurrent(null); // 注入できなかった。セッションを残さない
     throw err;
   }
 
@@ -226,17 +220,30 @@ export async function startSession(tabId) {
   return session;
 }
 
-export async function endSession(reason) {
+async function endSessionImpl(reason) {
   const session = await getCurrent();
   if (!session || session.state === SessionState.ENDED) return null;
-
-  await chrome.alarms.clear(WATCHDOG_ALARM);
-  await chrome.action.setBadgeText({ text: '' });
 
   // 離脱したまま終わった場合、その離脱時間も「離れていた累計」に足す(すぐ戻ったには数えない)
   if (session.state === SessionState.ESCAPED && session.escaped_at) {
     session.away_total_ms = (session.away_total_ms ?? 0) + (Date.now() - session.escaped_at);
   }
+  // 最初に「終了中」を保存する: 終了が二重に走らない(SW の再起動を跨いでも)・
+  // 終了処理の途中に届いた報告でセッションが生き返らない
+  session.state = SessionState.ENDED;
+  await setCurrent(session);
+  try {
+    return await finishSession(session, reason);
+  } finally {
+    // 記録の書き込みが途中で失敗しても、セッションは必ず閉じる(次の開始・全消去を塞がない)
+    await setCurrent(null);
+  }
+}
+
+/** 終了の本体: 記録・制御器・content script への片付けの依頼。 */
+async function finishSession(session, reason) {
+  await chrome.alarms.clear(WATCHDOG_ALARM);
+  await chrome.action.setBadgeText({ text: '' });
 
   const success =
     session.read_ms >= SUCCESS.minReadMs && session.escapes <= SUCCESS.maxEscapes;
@@ -388,14 +395,13 @@ export async function endSession(reason) {
     /* タブclose済み */
   }
 
-  await setCurrent(null);
   return { ...session, state: SessionState.ENDED, success, reason };
 }
 
 /** content scriptからの計測報告。送信元がセッションのタブであることを必ず確認する。 */
-export async function onReport(event, payload, sender) {
+async function onReportImpl(event, payload, sender) {
   const session = await getCurrent();
-  if (!session || sender.tab?.id !== session.tab_id) return;
+  if (!session || session.state === SessionState.ENDED || sender.tab?.id !== session.tab_id) return;
 
   const now = Date.now();
   session.last_event_at = now;
@@ -533,17 +539,19 @@ export async function onReport(event, payload, sender) {
 }
 
 /** タブ切替。セッションタブへ戻れば復帰、別タブへ移れば離脱。 */
-export async function onTabActivated(activeInfo) {
+async function onTabActivatedImpl(activeInfo) {
   const session = await getCurrent();
-  if (!session) return;
+  if (!session || session.state === SessionState.ENDED) return;
 
   if (activeInfo.tabId === session.tab_id) {
     await returnFromEscape(session);
   } else {
+    // 行き先は見ない(tabs 権限を持たないので、Play ブックス以外のタブの URL は読めない)。
+    // 行き先が別の Play ブックスのときだけドメインが残る
     let toDomain = null;
     try {
       const tab = await chrome.tabs.get(activeInfo.tabId);
-      toDomain = domainOf(tab.url); // ドメインのみ。URL全体・タイトルは見ない・保存しない
+      toDomain = domainOf(tab.url);
     } catch {
       /* 取得できなければ行き先なしで記録 */
     }
@@ -552,9 +560,9 @@ export async function onTabActivated(activeInfo) {
 }
 
 /** ウィンドウのフォーカス移動。全ウィンドウ非フォーカス=OSの別アプリへの離脱。 */
-export async function onWindowFocusChanged(windowId) {
+async function onWindowFocusChangedImpl(windowId) {
   const session = await getCurrent();
-  if (!session) return;
+  if (!session || session.state === SessionState.ENDED) return;
 
   if (windowId === chrome.windows.WINDOW_ID_NONE) {
     await escape(session, null);
@@ -572,10 +580,10 @@ export async function onWindowFocusChanged(windowId) {
   }
 }
 
-export async function onTabRemoved(tabId) {
+async function onTabRemovedImpl(tabId) {
   const session = await getCurrent();
   if (!session || tabId !== session.tab_id) return;
-  await endSession(EndReason.CLOSE);
+  await endSessionImpl(EndReason.CLOSE);
 }
 
 /**
@@ -584,14 +592,30 @@ export async function onTabRemoved(tabId) {
  * Play ブックスのページ送り(pg= の変化)は同じ本の中の移動として、終了ではなく
  * page_turn として記録する。
  */
-export async function onTabUpdated(tabId, changeInfo) {
+async function onTabUpdatedImpl(tabId, changeInfo) {
   const session = await getCurrent();
-  if (!session || tabId !== session.tab_id || !changeInfo.url) return;
-  if (pageKey(changeInfo.url) === session.page_url) {
+  if (!session || session.state === SessionState.ENDED || tabId !== session.tab_id) return;
+  let url = changeInfo.url;
+  if (!url) {
+    // Play ブックスの外へ移ると、host 権限が無いので changeInfo に URL が載らない。
+    // 読み込みが始まったらタブの URL を確かめ、読めなければ本から離れたとみなす
+    if (changeInfo.status !== 'loading') return;
+    try {
+      url = (await chrome.tabs.get(tabId)).url ?? null;
+    } catch {
+      url = null;
+    }
+    if (url && pageKey(url) === session.page_url) return; // 同じ本の再読み込み
+    if (!url) {
+      await endSessionImpl(EndReason.CLOSE);
+      return;
+    }
+  }
+  if (pageKey(url) === session.page_url) {
     if (session.site === 'play_books') await onPageTurn(session);
     return;
   }
-  await endSession(EndReason.CLOSE);
+  await endSessionImpl(EndReason.CLOSE);
 }
 
 /**
@@ -610,14 +634,14 @@ async function onPageTurn(session) {
 }
 
 /** 30秒ごとの見回り。無操作3分/復帰なし3分の自動終了はここで判定する。 */
-export async function onWatchdog() {
+async function onWatchdogImpl() {
   const session = await getCurrent();
   if (!session) {
     await chrome.alarms.clear(WATCHDOG_ALARM); // 迷子のalarmを掃除
     return;
   }
   if (Date.now() - session.last_event_at > SESSION.idleTimeoutMs) {
-    await endSession(EndReason.IDLE);
+    await endSessionImpl(EndReason.IDLE);
   }
 }
 
@@ -625,7 +649,7 @@ export async function onWatchdog() {
  * θ手動ダイヤル(ドッグフーディング用、W3で自動化)。連続値[0, THETA_MAX]。
  * 進行中のセッションがあれば即時反映する — 「θを変えると読書体験が変わる」の確認用。
  */
-export async function setTheta(value) {
+async function setThetaImpl(value) {
   const clamped = Math.min(Math.max(Number(value) || 0, 0), THETA_MAX);
   const state = await getState();
   state.theta = clamped;
@@ -682,3 +706,27 @@ async function returnFromEscape(session) {
   session.last_event_at = now;
   await setCurrent(session);
 }
+
+// ---- 1本の列に並べる ---------------------------------------------------------
+// currentSession を読んで書き戻す処理は、同時に走ると古い写しで上書きし合う(読了の瞬間に
+// book_progress・book_end・dwell が重なる、タブを閉じるのと終了ボタンが重なる等)。
+// SW の中で1本の列に並べ、1つずつ最後まで走らせる。列の中から公開関数を呼ぶと
+// 待ち合って止まるので、中では *Impl を直接呼ぶ。
+let queue = Promise.resolve();
+function serial(fn) {
+  return (...args) => {
+    const run = queue.then(() => fn(...args));
+    queue = run.catch(() => {});
+    return run;
+  };
+}
+
+export const startSession = serial(startSessionImpl);
+export const endSession = serial(endSessionImpl);
+export const onReport = serial(onReportImpl);
+export const onTabActivated = serial(onTabActivatedImpl);
+export const onWindowFocusChanged = serial(onWindowFocusChangedImpl);
+export const onTabRemoved = serial(onTabRemovedImpl);
+export const onTabUpdated = serial(onTabUpdatedImpl);
+export const onWatchdog = serial(onWatchdogImpl);
+export const setTheta = serial(setThetaImpl);
