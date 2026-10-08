@@ -15,7 +15,7 @@ const BOOK_READER = 'https://play.google.com/books/reader';
 // 残り時間を出すのに要る、ペースの素材(前へ進んだページ数の合計)の最小値
 const MIN_PACE_PAGES = 3;
 
-/** pages の1行が Play ブックスの本か(本は id= 単位で1行。docs/data-design.md §1)。 */
+/** pages の1行が Play ブックスの本か(本は id= 単位で1行。docs/design.md §8)。 */
 export function isBookPage(page) {
   return (page.url ?? '').startsWith(BOOK_READER);
 }

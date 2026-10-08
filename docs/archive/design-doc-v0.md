@@ -1,6 +1,6 @@
 # Design Doc: ドーパミン補助輪付き読書拡張 v0
 
-> **ARCHIVED(2026-09-14)。** 本書は歴史資料。現行の設計は [../architecture-v1.md](../architecture-v1.md) が唯一の一次資料。
+> **ARCHIVED(2026-09-14)。** 本書は歴史資料。現行の設計は [../design.md](../design.md) が唯一の一次資料(architecture-v1 を経て統合)。
 > 本書には実装と食い違う旧世界観が残っている: 離散 Level(state・診断・Mirror・「Level 4以上」)、
 > tabs リスナーの開始時登録/終了時解除。いずれもコードでは廃止済み(連続θ・常設リスナー+ガード)。
 

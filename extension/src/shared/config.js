@@ -245,7 +245,7 @@ export const SUCCESS = {
   maxEscapes: 1,
 };
 
-// 読書安定度 S ∈ [0,1](architecture-v1.md §4)。二値successの粗さ(20分読んで1回逸れた人と
+// 読書安定度 S ∈ [0,1](docs/design.md §4)。二値successの粗さ(20分読んで1回逸れた人と
 // 5分ぎりぎりの人が同じ「成功」)を連続値に格上げする。
 // v0.14: 並走計測のみ。sessions.stability に保存して二値と一致率を見る。制御には繋がない。
 // 不変条件: 入力は行動シグナルだけ。ヒント数・演出数・クイズ正誤・問いの数・目標達成・
@@ -274,7 +274,7 @@ export const GOALS = {
 };
 export const DEFAULT_GOAL = 'level1';
 
-// 合格ライン(2026-09-14確定・architecture-v1.md §10)。「達成率を保ったままθが下がる」の
+// 合格ライン(2026-09-14確定・docs/design.md §10)。「達成率を保ったままθが下がる」の
 // 「保つ」を数値化したもの。評価レイヤー専用 — 制御器は読まない。
 export const PASS = {
   achievementFloor: 0.8, // 週次達成率がこれ以上を「保った」と数える

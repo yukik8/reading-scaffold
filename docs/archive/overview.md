@@ -1,5 +1,7 @@
 # reading-scaffold 全体像
 
+> **ARCHIVED(2026-10-08)。** 本書は歴史資料。現行の設計は [../design.md](../design.md)(この文書を含む5本を統合した唯一の設計書)。全体像は design.md §0〜§2・§12 に移した。図(overview-components.svg)は IndexedDB v3・Web 記事・/quiz・/ask の時点のもの。
+
 - **Status:** 2026-09-28・v0.14.2 時点
 - **Audience:** マネージャーと、これから関わる人。組み立て・進み具合・難所を1ページで掴むための資料
 - **詳細:** 設計の一次資料は [architecture-v1.md](architecture-v1.md)、処理の順序は [architecture-v1.md の付録 A](architecture-v1.md#付録-a-シーケンス図)

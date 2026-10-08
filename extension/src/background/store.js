@@ -1,6 +1,6 @@
 // IndexedDB。生イベントはここにしか置かない。
 //
-// 3層構造(docs/data-design.md):
+// 3層構造(docs/design.md §8):
 //   計測層: events(append-only) / sessions(集計キャッシュ)
 //   制御層: state(単一レコード・連続θ)
 //   記録層: pages(本) / readings(読んだ区間) / quizzes / quiz_attempts / questions
@@ -51,7 +51,7 @@ export function openDb() {
         attempts.createIndex('by_quiz', 'quiz_id');
         attempts.createIndex('by_page', 'page_id');
       }
-      // v3: 自分からの問い(道具カテゴリの記録。docs/ask-and-nano-design.md)
+      // v3: 自分からの問い(道具カテゴリの記録。docs/design.md §7)
       if (!db.objectStoreNames.contains('questions')) {
         const questions = db.createObjectStore('questions', {
           keyPath: 'question_id',
@@ -59,7 +59,7 @@ export function openDb() {
         });
         questions.createIndex('by_page', 'page_id');
       }
-      // v4: 読んだ区間(1セッション=1行。本の中のどこを読んだか。docs/data-design.md §2.2)
+      // v4: 読んだ区間(1セッション=1行。本の中のどこを読んだか。docs/design.md §8)
       if (!db.objectStoreNames.contains('readings')) {
         const readings = db.createObjectStore('readings', { keyPath: 'session_id' });
         readings.createIndex('by_page', 'page_id');

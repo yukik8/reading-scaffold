@@ -1,8 +1,10 @@
 # データ設計 v2: 本と箇所を単位にする(2026-10-07)
 
+> **ARCHIVED(2026-10-08)。** 本書は歴史資料。現行の設計は [../design.md](../design.md)(この文書を含む5本を統合した唯一の設計書)。データ設計は design.md §8 に移した。
+
 - **Status:** v2。DB v4(`readings` と、問い・クイズの位置)と、ダッシュボードの本棚・帯・余白(§4 の 1・2)は実装済み。§2.4 の `passages` `marks` `recalls` と §4 の 3・4 は計画
 - **対象:** Google Play ブックスに絞る(2026-10-07 決定)。Web 記事の計測は動くが、記録層の設計は本を前提にする
-- **前版:** [archive/data-design-v1.md](archive/data-design-v1.md)(3層の原則はそこで決めた。本書はそれを引き継ぐ)
+- **前版:** [archive/data-design-v1.md](data-design-v1.md)(3層の原則はそこで決めた。本書はそれを引き継ぐ)
 - **親:** [architecture-v1.md](architecture-v1.md)
 
 ---

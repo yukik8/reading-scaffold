@@ -1,0 +1,686 @@
+# 設計: reading-scaffold
+
+- **Status:** 唯一の設計書(2026-10-08)。architecture-v1・data-design v2・reward-design・ask-and-nano-design・overview を統合した。旧版は [archive/](archive/)
+- **対応コード:** v0.21.1。「計画」と書いた項以外は現物
+- **対象:** Google Play ブックス(ウェブ版)専用。Web 記事の経路はコードに一部残るが、開始できない
+- **関連:** 公開の手順は [release.md](release.md)、利用者向けの説明は [../PRIVACY.md](../PRIVACY.md)、サーバは [../server/README.md](../server/README.md)、文献は [research/](research/)
+
+---
+
+## 0. ひとことで
+
+読書中だけ動く Chrome 拡張。読む時間を支える補助(余白の花・くま・突然クイズといった演出)を出し、その量 θ を**本人が気づかない速度で減らしていく**。補助がゼロになっても読めていれば成功(卒業)。読んだ記録と「自分からの問い」は減らさずに残す。
+
+「ドーパミン」は利用者向けのメタファーで、システム変数ではない。システムが制御するのは**足場の量 θ ただ一つ**で、その目標値は常に 0。
+
+### θ とは
+
+θ は「本文1,000語(日本語は1,000字)あたり、ヒント・演出を何回出すか」を表す1本の数字。範囲は 0〜8。
+
+| θ | 1,000字あたりの演出 | 地のきらきら | 意味 |
+|---|---|---|---|
+| 8 | 約8回 | 最も多い | 最大。診断で最も補助が要る人の初期値 |
+| 4 | 約4回 | θ=8 のときの1/4 | |
+| 1 | 約1回 | θ=8 のときの1/64 | |
+| 0 | 出ない(クイズ・くま・フィナーレも出ない) | 出ない | 卒業。自分からの問いと記録は残る |
+
+- **初期値:** オンボーディングの4問診断で 2〜8 に置く。以後 θ を動かすのは制御器だけ
+- **動き方:** 成功したセッション(5分以上読み、離脱1回以下)ごとに 10% 減る。2回続けて失敗したら 30% 戻す。1日の変化は ±15% まで。0.3 を切ったら 0(卒業)。失敗がなければ 8 から成功32回、週3回で約11週
+- **見せ方:** 変化は通知しない。セッションごとに ±10% の揺らぎを乗せて、下がる傾向を隠す。読書中の画面には θ を出さない(ストア版は開始の通知からも外す)。推移は本人がダッシュボードを開けば見られる
+
+---
+
+## 1. 三分法と、漸減する軸は一本だけ
+
+すべての機能は次の三つのどれかに属する。どれにも属さない機能は作らない。両方の性質を持つものも作らない。
+
+| | 演出(stimulus) | 記録(record) | 道具(tool) |
+|---|---|---|---|
+| 何 | 余白の花・地のきらきら・くま・うんちく・突然クイズ・読了フィナーレ | 本棚・帯・読んだ区間・余白(問いとクイズ)・累計 | 自分からの問い |
+| 起点 | システム(θ+乱数) | 蓄積 | 本人 |
+| θとの関係 | **θ配下。θとともに漸減し、卒業(θ=0)で消える** | 非制御。永続 | 非制御。永続 |
+| 可変報酬 | あり(乱数・レア度) | **禁止**(決定的な蓄積のみ) | **禁止**(回答に演出をつけない) |
+| 住処 | 読書中のページ上(本文の外) | ダッシュボード | 読書中のページ上(小さく) |
+
+理由: **タペリングできない刺激装置を作ってはいけない**(愛着の湧いたものはフェードアウトできない)。永続するものからは可変報酬のループを構造的に外す。
+
+- くまはペットではなく**演出**。育たない・お腹が空かない・要求しない。θ=0 で出なくなる。ペットにするなら記録カテゴリ(読書中の視界の外・一方向の蓄積のみ)に置く(旧 reward-design の判断)
+- 「注意支援・理解支援・報酬・記憶」を別々の制御器にはしない。n=1 で4つの方策は同定できず、「減らすもの」と「残すもの」の線は三分法で引けている。**θ以外を制御しない**
+
+---
+
+## 2. 構成
+
+```mermaid
+flowchart TB
+  user(["利用者"])
+
+  subgraph ui["拡張ページ"]
+    popup["popup<br/>読む / 終える・今週の様子"]
+    onboarding["onboarding<br/>診断 → θ の初期値・目標・うんちくの同意"]
+    dashboard["dashboard<br/>本棚・帯・推移・データ管理"]
+  end
+
+  subgraph tab["Play ブックスのタブ(セッション中だけ注入)"]
+    pager["playbooks-pager.js<br/>全フレーム: ページ表示「N / M」を読む"]
+    loader["loader.js<br/>版キーのガード・本文が出るまで待つ"]
+    main["main.js(本文フレーム)<br/>本文検出・計測・θ駆動の演出計画"]
+    fx["margin.js 余白の花 / stage.js くま・クイズ・フィナーレ<br/>overlay.js 問いのボタン・通知 / paint.js 水彩"]
+  end
+
+  subgraph sw["Service Worker(MV3)"]
+    router["service-worker.js<br/>ルータ・常設リスナー・送信元の確認"]
+    session["session.js<br/>状態機械・離脱・ページ送り・1本の列"]
+    controller["controller.js<br/>θ の漸減・ホメオスタット・S"]
+    store[("store.js<br/>IndexedDB v4")]
+    agg["mirror / kpi / library<br/>集計"]
+    ai["ai.js<br/>Gemini Nano"]
+    srv["server.js<br/>うんちくの単語だけ"]
+  end
+
+  nano["Gemini Nano<br/>端末内"]
+  server["Vercel: server/main.py → Anthropic<br/>同意したときだけ・単語の候補だけ"]
+
+  user --> popup & onboarding & dashboard
+  popup -- "START / END_SESSION" --> router
+  router -- "注入" --> loader --> main --> fx
+  loader --> pager
+  pager -- "book_progress / book_end" --> router
+  main -- "REPORT / QUIZ_* / ASK / TRIVIA" --> router
+  router --> session --> controller --> store
+  router --> ai --> nano
+  router --> srv --> server
+  store --> agg --> dashboard
+
+  style nano fill:#e1f5ee,stroke:#0f6e56,color:#04342c
+  style server fill:#faece7,stroke:#993c1d,color:#4a1b0c,stroke-dasharray:5 5
+```
+
+緑=端末内で完結。橙の点線が端末の外へ出る唯一の経路で、本人が同意したときに、端末で選んだ単語の候補(最大8語)だけが通る(§9)。
+
+- **Play ブックスのフレーム:** 最上位は `play.google.com/books/reader`、本文とページ表示は `books.googleusercontent.com` のフレームの中。ローダーは全フレームに入り、本体(main.js)は本文のあるフレームでだけ動く
+- **ビルド工程なし。** ES モジュールをそのまま読む。ストア版かどうかは manifest の `update_url` の有無で見分ける(`IS_STORE_BUILD`)
+
+### 論理パイプライン
+
+```mermaid
+flowchart LR
+  sensor["Sensor<br/>鼓動・離脱・ページ送り"]
+  engine["Session Engine<br/>1セッションに集約"]
+  state["User State<br/>θ・S"]
+  policy["Policy<br/>制御器・演出パラメータ"]
+  stim["演出<br/>θ配下"]
+  record["記録<br/>永続"]
+  tool["道具<br/>永続"]
+
+  sensor --> engine --> state --> policy --> stim
+  engine -. "非制御" .-> record
+  engine -. "非制御" .-> tool
+
+  style stim fill:#eeedfe,stroke:#534ab7,color:#26215c
+  style record fill:#f1efe8,stroke:#5f5e5a,color:#2c2c2a
+  style tool fill:#f1efe8,stroke:#5f5e5a,color:#2c2c2a
+```
+
+実線の列だけが制御ループ。記録と道具は θ を読まないし書かない。
+
+---
+
+## 3. セッションエンジン(session.js)
+
+```
+IDLE ──[読む(popup)]──▶ ACTIVE
+ACTIVE ──[タブ切替/ウィンドウ非フォーカス]──▶ ESCAPED ──[復帰]──▶ ACTIVE
+ACTIVE/ESCAPED ──[終える / タブを閉じる / 本の外へ移る / 無操作3分]──▶ ENDED
+```
+
+- **開始は popup から**(ユーザー操作)。Play ブックスのリーダー以外では開始しない。host 権限が Play ブックスにしか無いので、他のタブは URL も読めない
+- **同じ本**は URL の `id=` で判定する。ページ送り(`pg=` の変化)は終了ではなく `page_turn`。別の本・Play ブックスの外へ移ったら終了
+- 離脱はセッションを終わらせない(離脱→復帰が制御の主要シグナル)。復帰なし3分で自動終了
+- **計測はセッション中のみ:** tabs 系リスナーは service-worker.js のトップレベルに常設し(MV3 の再起動要件)、全ハンドラは最初にセッションを確かめ、無ければ何も読まず何も書かずに戻る
+- **現在値は `chrome.storage.local`**。SW の再起動もブラウザの終了も跨ぐ。ブラウザの起動時(`onStartup`)と拡張の更新時(`onInstalled: update`)に、取り残されたセッションを**最後の記録の時刻で**閉じる。閉じていた間は読書時間にも離脱時間にも数えない(v0.21.1)
+- **1本の列:** currentSession を読んで書き戻す処理(報告・離脱・ページ送り・終了)は SW の中で直列に走らせる。並べないと読了の瞬間の報告どうしが上書きし合う
+- **終了は二重に走らない:** 最初に `ENDED` を保存してから記録を書き、最後に必ず現在値を消す
+- 終了時にすること: 成否の判定 → (成功かつ θ>0 なら)読了のお祝い → `sessions` に集計 → `readings`・`pages` に記録 → 制御器で θ を更新 → 古い細かい計測の掃除 → content に片付けを頼む
+
+### Sensor の操作的定義(main.js・playbooks-pager.js)
+
+| 量 | 定義 |
+|---|---|
+| 読書時間 read_ms | 本文の段落が見えていて(IntersectionObserver 10%)、直近90秒以内に操作かページ送りがある間の、20秒の鼓動の合計。ページ送りの本は1ページ読む間に操作がないので、窓を90秒にしている |
+| 離脱 escapes | タブ切替・ウィンドウ非フォーカスの回数。行き先は記録しない(読める権限がない) |
+| 最長連続 longest_streak_ms | 鼓動が40秒以内に続き、離脱で切れない区間の最長 |
+| 読了率 completion_pct | 本の中の位置(ページ表示 page/total)。段落の比率は使わない(読み込まれた分の中の位置なので途中でも100%になる) |
+| 読了 | 1ページずつ進んで最後のページに着いたとき(pager の `book_end`)。スライダーや目次で飛んだ・最後のページで開き直した、は読了にしない |
+| 本文 | `reader-rendered-page .main_text > div` の空でない段落(ルビの振り仮名は除く)。3段落・200語未満なら measure-only(演出なし・計測のみ) |
+
+- 表紙や挿絵のページで始めたときは、ローダーが本文のページが出るまで待ってから本体を入れる
+- 先読みされて画面の外にあるページの段落も DOM にあるので、「見えている」は可視の監視で判定する。同じ段落が作り直されても、本文の文字列で同じ番号として扱う
+- 問いのボタンの操作と入力は「読書中の活動」に数える(問いの最中に放置終了させない)
+
+---
+
+## 4. User State: θ と S
+
+### θ(現物)
+
+- 単一レコード `state`: `{ theta, success_streak, fail_streak, day, day_start_theta, diag_answers, goal, onboarded_at, homeostat? }`
+- **実効θ** = θ × (1 ± 0.1 の乱数)。日々±10%揺れる中を成功あたり10%下るので、下降がノイズに埋もれる(迷彩)
+- **診断は事前分布を置くだけ:** 4問(各0〜2点)の合計 → `[2, 3, 4, 5, 5.5, 6, 7, 7.5, 8]`。セッションの実績が1つでもあれば、診断のやり直しは θ を触らない
+
+### S(読書安定度)— 並走計測中(制御には未接続)
+
+二値の success(5分以上・離脱1回以下)は「20分読んで1回逸れた」と「5分ぎりぎり」を区別できない。S ∈ [0,1] に格上げする予定で、v0.14 から `sessions.stability` に並走で記録している。ルールベース(ML にしない)。
+
+```
+S = clamp( 0.40·dur + 0.25·escape + 0.15·return + 0.10·completion + 0.10·ending, 0, 1 )
+dur        = min(read_min / 20, 1)
+escape     = max(0, 1 − escapes/3) × max(0, 1 − away_total_ms/3分)
+return     = 離脱のうち60秒以内に戻った割合(離脱なしは1)
+completion = completion_pct / 100
+ending     = manual:1 / close:0.7 / idle:0.3
+```
+
+**S に入れないもの:** ヒント・演出の回数、クイズ正誤、問いの数、目標達成、連続日数、その他エンゲージメント指標。理解を制御に入れると「簡単な問題を出せば θ が下がる」自己目的化の回路ができる。理解は評価のガードレールにだけ使う(§10)。
+
+---
+
+## 5. 制御器(controller.js)
+
+### タペリング(現物)
+
+```
+セッション終了ごとに:
+  ごく短いセッション(読書1分未満・離脱なし = 誤って開始・本の切り替え)→ 成否に数えない
+  success → success_streak++, fail_streak=0, θ ← θ×0.9      # 本人が気づける差(10〜20%)より小さい
+  fail    → fail_streak++,    success_streak=0
+  fail_streak ≥ 2 → θ ← θ×1.3                               # 戻すときは大きく(ヒステリシス)
+  1日の総変化は ±15% まで
+  θ < 0.3 → θ = 0(卒業。乗算は0に届かないのでスナップ)
+```
+
+### ホメオスタット(卒業後の見守り・v0.21.1)
+
+- 卒業の瞬間に、補助なし読書時間(ヒント・演出ゼロのセッションの読書時間)の4週平均を**基準**として記録する
+- 卒業(再卒業)から4週は見守るだけ(4週平均が卒業後の読書を映すまで待つ)。基準が0だったときは、4週たった時点の週平均を基準にする
+- その後、4週平均が基準の **50%** を切ったら θ=1.5 へ一時再展開する(1日の変化幅の基準も1.5に置く)
+- 再展開中も**通常の漸減は続く**(目標は常に0)。4週平均が基準の **80%** まで戻るか、漸減で0に着いたら再卒業
+- 文献(research/fading.md): 乗算的な減衰は減薬の標準形式と同型。パンの減塩 RCT(週5%・累積25%で気づかれない)が「気づかれない漸減」の実証例
+
+### これからの変更(計画)
+
+- 二値 success → S。`S ≥ 0.7` で成功、`S ≤ 0.3` で失敗、間は据え置き。並走データがたまってから
+- fading.md の推奨: ①失敗時は ×1.3 でなく**最後に安定成功していた θ へ戻す** ②卒業直前(θ<0.6)は刻みを細かく(0.3→0 の一括変化は気づかれうる) ③再展開は1.5の一括でなく低θ(0.15)からの漸増
+- 日次±15% は文献の根拠がない。工学的な裁量と明記して残す
+
+---
+
+## 6. 演出(Play ブックス)
+
+演出は**本文の外**に描く。読んでいる文字の上には何も重ねない。画風は絵本・水彩(paint.js が形を一度だけ焼き、毎フレームは位置と透明度だけを変える)。大きく画面を覆うのは、突然クイズと読了フィナーレの決まった瞬間だけ。
+
+### 余白(margin.js)
+
+- 本文の枠の外の帯(縦書きは上下、横書きは左右)から描く場所を選び、描くたびに本文の枠を切り抜く
+- **地のきらきら:** 読んでいる間、1.5秒ごとに (θ/8)² × 0.35 の確率で、余白の一点に小さな星が瞬く。銀
+- **ヒント(θの枠):** normal は小さな花が咲いて花びらが流れる。rare は金の花がいくつも、epic は星が二度瞬いてから水彩の虹の帯。文字のカードは出さない
+
+### めくった直後の出来事(PAGE_EVENTS・stage.js)
+
+ページを送るたびに抽選し、当たれば0.6秒おいて出す(出たり出なかったりする=可変報酬)。開始から2回のめくりまでは何も起きない。
+
+| 出来事 | 1回のめくりで出る確率 | 間隔 | 中身 |
+|---|---|---|---|
+| 突然クイズ | 0.25 × θ/8 | 2分以上 | 画面全体のカードに3択。間違えても「おしい!」で選び直せる。正解で花火・花びら・ことば吹雪 |
+| くま | 0.35 × θ/8 | 45秒以上・クイズの後20秒は出さない | 画面の下の隅から顔を出す。うんちくが作れていれば65%でうんちくを一言、それ以外は顔を出すだけ |
+
+- クイズとうんちくは生成に数秒かかるので、**読み終えたページ**(既読で、いま見えていない段落・最大1,500字)から先に1つずつ作ってストックしておく。未読のページからは作らない(ネタバレ禁止)
+- ストックは古くなったら捨てる(クイズ6めくり・うんちく4めくり)。作れなかったら3めくり空けてから作り直す
+- クイズは**出したときに記録する**(先に作っただけの問題は本棚に残さない)
+- 派手さは intensity(θ/8)に比例する。θ が高いほど祭り、低いほど静か
+- めくるたびに花びらを降らせる演出(PAGE_SHOWER)と、紙の角がめくれる演出(PAGE_CURL)は、読書の邪魔だったので止めてある
+
+### 読了フィナーレ
+
+1ページずつ進んで最後のページに着いた瞬間に1回だけ。水彩の虹が描かれ、本の帯に「読了!!」、花火とことば吹雪、旗を振るくま。大きさは θ に比例し、θ=0 では出さない。
+
+### θ → 演出パラメータ
+
+| パラメータ | 導出 |
+|---|---|
+| ヒントの枠 | θ × 本文語数 / 1000。後から読み込まれたページの段落にも、端数を持ち越しながら割り当てる。Play ブックスでは枠どうしを30秒以上空ける |
+| レア度 | 計画時に**事前ロール**: epic 2.5% / rare 12% / normal。頻度は θ、大きさは乱数 |
+| 先触れ | レア以上が4段落先までに待つと、地の星が金(激レアは虹)に変わる。約1分で発火を保証 |
+| 天井 | θ>0 で演出ゼロの実読書が `clamp(12/θ, 3, 15)` 分続いたら normal を1回。残り時間は示さない |
+| 地のきらきら | (θ/8)² × 0.35 / 1.5秒 |
+| 突然クイズ・くま | 上の表。確率も派手さも θ/8 に比例 |
+| セッション成功のお祝い | success かつ θ>0 のときだけ、余白に金の花 |
+
+**色の語彙:** 銀=通常 / 金=レア確定 / 虹=激レア確定。外れ予告が存在しないので、「色=大きさ」が言葉なしで100%信頼できる語彙として学習される。
+
+### 予期の設計とパチスロの移植基準
+
+ドーパミンは報酬の受け取りではなく**予測誤差とcue(予告)**で出る(Schultz 1997)。だから頻度に加えて大きさを予測不能にし、予告で期待の瞬間を作る。ただし**予告は必ず当たる**(期待を裏切るのは良い方向だけ)。
+
+- **移植する:** 可変比率(いつ出るか=θ+乱数)、可変マグニチュード(レア度)、予告(先触れ・二度瞬き)、天井(下限保証)
+- **移植しない:** リーチ(ニアミス=悔しさ駆動)、確変・ラッシュ(継続圧力)、ゾーン(来訪圧力)、ストリーク、音・振動、収集・在庫、残り回転数の表示
+- 間欠強化は消去に強い(Humphreys 1939)= θ のタペリングに有利。ただし守られるのは「読む行動」で、演出への愛着ではない。θ が下がるにつれ、随伴性の重心を「読む→光」から「わかる→光」(クイズ)へ移す
+
+### 言葉の原則
+
+**言葉で褒めない・教えない。** 報酬は雰囲気(光・間・動き)で伝える。出してよい言葉は事実(進捗・経過分)だけ。禁止: 相槌(「いい調子」)、労い(「おつかれさま」)、解説・要点・教訓・アドバイス。LLM の出力にも適用する。
+
+例外(どれも意図して置いたもの):
+
+1. **本人が問うたことへの回答**(呼び出し式・§7)
+2. **ピークの瞬間の言葉:** クイズ正解の「正解!」「大当たり!!」、読了の「読了!!」、誤答の「おしい!」。`PAGE_EVENTS.words = false` で消せる
+3. **くまのうんちく:** 読み終えたページの言葉の意味や読み、実在の物事について一言。「教える」に近いが、θ 配下の演出として扱い、θ とともに減り、卒業で消える。辞書・事典で確かめられることだけを話し、本文の先の展開・要約・感想・褒め・アドバイスは書かない。自信がなければ黙る
+
+---
+
+## 7. 道具: 問い(現物)
+
+- 本文フレームの右下に小さな半透明のリング(問いのボタン)を常設。クリックで入力欄。**1問1答**(会話は続かない=読書から連れ出さない)
+- 文脈は読了済みの直近6段落と、選んでいる文字列。未読の部分は渡さない(ネタバレ禁止)
+- 回答は2〜3文。根拠の段落を光の枠で指す(「照らす、答えない」)。先回りの要約はしない(要約アプリ化は Non-Goal)
+- **端末内の Nano だけで答える。** 本文と質問は端末の外へ出さない。Nano が使えない端末では、使えないことだけを伝える
+- **回答に演出をつけない**(つけると質問がレバーになり、興味の指標も汚れる)
+- 記録: `questions` に問い・答え・その時のページ・選んでいた文字列。計測層の `question_asked` には文字数だけ
+- **制御器には入れない。** ダッシュボードの累計に「自分からの問い」を事実として出すだけ
+- 卒業の定義「刺激の起点が自分になる」の実体。システムの演出が減るにつれ、自分の問いが増えるのが理想の軌跡
+
+---
+
+## 8. 記録とデータ(store.js・IndexedDB v4)
+
+### 3層
+
+| 層 | ストア | 中身 | 本の URL・本文 | 行き先 |
+|---|---|---|---|---|
+| 計測層 | `events`(append-only) `sessions`(集計) | 鼓動・離脱・ページ送り・ヒント/演出/クイズ/問いの発生 | 持たない | ローカルのみ |
+| 制御層 | `state`(単一) | θ・streak・診断・目標・ホメオスタット | 持たない | ローカルのみ |
+| 記録層 | `pages` `readings` `quizzes` `quiz_attempts` `questions`(計画)`passages` `marks` `recalls` | 読書メモリ=本人の資産 | **持つ** | **ローカルのみ** |
+
+- 増やすのは記録層だけ。計測層は意図的に貧しいままにする。本の中の位置も記録層に置く
+- **単位は「本」と「箇所」。** 本=`pages` の1行(Play ブックスの URL の `id=` で1冊。ストア名は IndexedDB が改名できないので据え置き)。読んだ区間=`readings` の1行(1セッション=1区間)。箇所=本のページ番号(ページ表示「N / M」。見開き「4-5 / 17」は後ろのページ)
+- **本人が起点の痕跡**(問い・選んだ箇所・主張)を、システムが作ったもの(クイズ)より上に置く
+
+### ストアの中身
+
+```
+sessions  { session_id, date, started_at, domain, page_id, theta, theta_base, read_ms, escapes,
+            completion_pct, success, stability, reason, away_total_ms, quick_returns,
+            hints_shown, effects_shown, longest_streak_ms }
+pages     { page_id(正規化URLの SHA-256), url, title, domain, lang, word_count,
+            first_read_at, last_read_at, read_count, total_read_ms, best_completion_pct,
+            book_position { page, total }, finished_at }
+readings  { session_id, page_id, date, started_at, ended_at,
+            range { from, to, furthest, total }, page_turns, read_ms, reached_end }
+quizzes   { quiz_id, page_id, paragraph_hash, paragraph_excerpt, book_page,
+            question, choices[3], answer_index, created_at }
+quiz_attempts { attempt_id, quiz_id, page_id, session_id, answered_at, chosen_index, correct, latency_ms }
+questions { question_id, page_id, session_id, book_page, selection, question, answer, created_at }
+events    { id, session_id, t, type, payload }
+          type: session_start / dwell_tick / scroll / tab_escape / tab_return / page_turn / hint_shown /
+                hint_clicked / effect_shown / quiz_answered / question_asked / session_end / theta_update
+```
+
+- `title` はタブのタイトルから「 - Google Play Books」を除いたもの
+- `readings` は Play ブックスでページ表示が一度でも読めたセッションだけが書く。セッション中の位置は `chrome.storage.local` の別キー(`bookPosition`)に置く(currentSession に相乗りすると上書きし合う)
+- `pages` の集計値は導出キャッシュ。真実は `sessions` と `readings`
+- `chrome.storage.local` の設定: `demo_enabled`(演出の増幅のみ・既定OFF)、`trivia_server_consent`(うんちくのサーバ・既定OFF)、`install_id`(回数制限用のランダムな ID)
+
+### 保持・消去・持ち出し
+
+- 細かい計測(`dwell_tick`・`scroll`)は **180日** で消す。それ以外(セッションの集計・本・区間・クイズ・問い)は本人が消すまで残す
+- 全消去は1タップで全ストアと storage を空にし、インストール ID も消す(記録層=資産も含む)
+- エクスポートは JSON(資産なので持ち出せる)
+
+### ダッシュボードで出すもの
+
+すべて事実の表示。可変報酬・比較・警告・催促はしない。卒業後も残るのは記録なので、本の節を θ の節より上に置く。
+
+1. **本棚** — 本ごとに今の位置と、読み終えるまでの残り時間(残りページ ÷ その本での自分のペース)。読み終えた本は分ける
+2. **1冊の帯** — 本の長さを横棒にし、読んだ区間を読んだ回数の濃淡で塗る。問い(輪)とクイズ(点)をページの位置に打ち、しおりで今の位置を示す。開くと「余白」(問い・選んだ箇所・クイズをページ順に)と「読んだ日」
+3. **θ の節** — 帯(自立度 1−θ/8 を白→黄→緑→茶→黒の色で。黒が卒業)、自立の推移、週次目標の達成率、週次推移
+4. **累計とデータ** — 読書時間・補助なし時間・読み終えた本・クイズ・問い。エクスポート・全消去・うんちくの同意・内蔵AIの確認
+
+### 記憶の層(計画)
+
+読んだものが自分の知識として残る、の実体。原則は **retrieval practice(自分で思い出す)> LLM の要約**。LLM が要約して溜めたものは数ヶ月でゴミになる。本人が想起したものだけを資産にする。
+
+```
+passages  箇所。痕跡をすべてここにぶら下げる  { passage_id, page_id, book_page, excerpt, hash }
+marks     本人が起点の痕跡  { mark_id, passage_id, page_id, session_id, kind: question|selection|claim, text, answer?, created_at }
+recalls   思い出した記録  { recall_id, passage_id|mark_id, kind: quiz|recall, prompt, result, answered_at, days_since_read }
+```
+
+- 成功セッションの終わりに、道具の小さなカード「この本で一番大事だった主張を、ひとつ」を出す。本人が書いた一文が `marks` の `claim`。無視すれば黙って消える(要求しない)。演出はつけない
+- 数日後に別の手がかりで再想起させる(spaced retrieval)。結果は `recalls`
+- LLM の役割は想起の問いを作ることと、答えを本文に照らすことだけ。要約・正解の提示・採点の言語化はしない
+- 既存の `questions` は `marks(question)`、`quiz_attempts` は `recalls(quiz)` に寄せる。移すのは表示を作るとき
+- ダッシュボードに「時間がたっても残っていること」(7日後・30日後の想起)を、その場の正答率の代わりに出す
+
+---
+
+## 9. 生成基盤と端末の境界
+
+**本の本文は端末の外へ出さない。** Google Play の利用規約は、購入したコンテンツの送信・再配布を禁じている(2026-10-07 に確認し、この方式に決めた。法的な判断ではないので、公開前に専門家の確認を勧める)。
+
+| 生成 | どこで | 渡すもの |
+|---|---|---|
+| 突然クイズ | Gemini Nano(端末内) | 読み終えたページの本文 |
+| 問いへの回答 | Gemini Nano(端末内) | 問い・選んだ文字列・読了済みの段落 |
+| くまのうんちく | 同意あり: サーバ(Vercel → Anthropic)。返事がなければ Nano / 同意なし: Nano | サーバへは**端末で選んだ単語の候補だけ**(最大8語・1語16字まで)。文・段落・書名・URL は送らない |
+
+- **Nano(ai.js):** Prompt API。JSON Schema で出力を強制し、入出力言語 ja/en を宣言する。`downloadable` なら裏で一度だけダウンロードを起こし、それまでは何も出さない。ダッシュボードの「内蔵AIを確認・準備」がページの文脈で確実にダウンロードを始める。Chrome 138 以降が要る
+- **単語の候補(`pickTerms`):** 2〜6字の漢字の連なり、3字以上のカタカナ(擬音らしいものを除く)、8字以上の小文字始まりの英単語から、長さと珍しさで選ぶ
+- **サーバ(server/main.py):** `/trivia` と `/healthz` だけ。インストール ID ごと・IP ごと・全体の1日の回数制限、入力は8語・各16字まで(それ以外の項目は拒否)、単語と文はログにもファイルにも残さない。詳細は [../server/README.md](../server/README.md)
+- **生成の依頼は、計測中の Play ブックスのタブからだけ受ける。** セッションの外・別のタブ・終わった後に届いた先読みからは何も作らない
+- どれも作れなければ静かに諦める(読書を壊さない)。AI の出力はすべて文字として入れる(XSS なし)
+
+---
+
+## 10. オンボーディングと評価
+
+### オンボーディング(現物)
+
+```
+インストール(onInstalled: install)→ onboarding.html
+  導入 → 4問診断 → 目標を選ぶ(おすすめを事前選択)→ うんちくのサーバを使うか(既定オフ)→ 完了
+  COMPLETE_ONBOARDING: θ の初期値は「セッション実績ゼロかつ未完了」のときだけ置く
+```
+
+- 診断結果を「中毒度スコア」として見せない(ラベリングは責めない原則に反する)
+- ダッシュボードの「診断をやり直す」(Recalibrate)は目標と回答だけを更新し、θ は触らない
+
+### 評価レイヤー(kpi.js)
+
+- 主KPI = **週次目標の達成率 × θ の推移**。達成率を保ったまま θ が下がり続けることが、補助に依存せず読めている証拠。θ を下げると達成が崩れるなら機構の失敗(根拠: research/benchmark.md §5)
+- 段階別の目標(本人が選ぶ・制御器は読まない): L1 成功セッション週3 / L2 週5+連続の中央値10分 / L3 補助なし週60分
+- 理解のガードレール: クイズ正答率(今週と全期間)を対で出す
+- **制御と評価の分離:** 制御用の success/S の定義は固定。段階で厳しくなるのは評価用の目標だけ
+- 達成率は本人が開くダッシュボードにだけ、事実として出す(未達の警告・赤・催促なし)。popup には出さない
+
+### 合格ライン(2026-09-14 確定・`config.PASS`)
+
+| 項目 | 値 | 根拠 |
+|---|---|---|
+| 達成率の下限 | 選んだ段階の目標に対して週 **80%以上** を、直近 **4週のうち3週** | benchmark.md「80%以上を4週継続」を1週の取りこぼし許容に |
+| 卒業の期限 | 開始から **12週** 以内に θ=0 | 8→0.3 に成功約32回。週3回で約11週+余裕 |
+| 卒業後の維持 | 補助なし読書時間の4週平均が基準の **50%** を割らない(割れば再展開) | fading.md・Lally 2010 |
+| 理解の非劣化 | クイズ正答率が全期間平均より **10ポイント** 以上下がらない | 時間だけの最大化を防ぐ |
+
+一文で: **12週以内に θ を 8→0 にし、その間、週次達成率80%以上を4週中3週で保ち、クイズ正答率を落とさない。** 達しなければ機構の失敗と判定する。
+
+---
+
+## 11. 不変条件(コードで守るもの)
+
+ここが唯一の一覧。README・コードのコメントはここを指す。
+
+1. **ページを改変しない。** 追加するのは Shadow DOM の中の層だけ。ページの要素に属性も付けない。演出は本文の外に描く
+2. **計測はセッション中のみ。** 常設リスナー+全ハンドラの先頭でセッションを確かめる
+3. **θ の目標値は常に0。** 制御器の入力は行動シグナル(read_ms・escapes・away・return・completion・終了理由)だけ。クイズ正誤・問いの数・演出数・目標・連続日数などは入れない
+4. **予告は必ず当たる。** ニアミスを作らない。先触れ・二度瞬きは必ず本演出で回収する
+5. **演出は θ 配下、記録に可変報酬なし、道具に演出なし。** タペリングできない刺激装置を作らない
+6. **言葉で褒めない・教えない。** 例外は §6 の3つ(呼び出し式の回答・ピークの言葉・くまのうんちく)だけ
+7. **本の本文は端末の外へ出さない。** 本文を扱う生成は Nano だけ。外へ出るのは、同意したときの単語の候補だけ。外へ送るものを増やすなら、規約・PRIVACY.md・同意の文言を先に見直す
+8. **記録はローカルのみ。** 計測・θ・読書メモリは IndexedDB に置き、サーバへ出さない
+9. **制御用の success/S と評価用の目標を分ける。** 途中で制御の力学を変えない
+10. **デモは演出の増幅にだけ効く。** プロフィールごと・既定OFF。ストア版では開発用の機能(θ の手動上書き・デモ・デモデータ投入・開始の通知の θ と版)を出さない
+
+---
+
+## 12. これまでとこれから
+
+| 日付 | 版 | できたこと |
+|---|---|---|
+| 8/16 | v0.1〜0.8 | 計測・演出・θ の自動漸減とホメオスタット・ダッシュボード |
+| 8/31 | v0.9 | KPI を「週次達成率 × θ」に |
+| 9/02 | v0.10 | オンボーディング(診断 → θ の初期値・目標) |
+| 9/05 | v0.11 | 演出 v2(色の語彙・先触れ・天井) |
+| 9/07 | v0.12 | 自分からの問い・Gemini Nano |
+| 9/10 | v0.13 | デモモードを実行時トグルに |
+| 9/14 | v0.14 | S の並走計測・Recalibrate・合格ライン |
+| 10/07 | v0.20 | Play ブックス対応・絵本の演出(くま・突然クイズ・うんちく・読了フィナーレ・余白)・読んだ区間(DB v4)・本棚 |
+| 10/07 | v0.21 | 本文を端末の外に出さない(方式B)・Play ブックス専用・うんちくサーバを Vercel へ |
+| 10/08 | v0.21.1 | レビューの残り: セッションをブラウザ終了で失わない・読了判定・ホメオスタットの罠・ページ側の後片付け |
+
+### これから
+
+1. **Chrome ウェブストアに出す** — 製品名・アイコン・掲載文・プライバシーポリシーの公開([release.md](release.md))
+2. **S を制御に接続** + fading.md の3修正(§5)
+3. **記憶の層**(`passages` `marks` `recalls`・DB v5)+終わりの想起カード(§8)
+4. 他人の環境で動くか: Play ブックスの画面の変化への追従、Nano が使える端末の割合
+
+### Open Questions
+
+1. S の係数と閾値(0.7/0.3)は仮。「idle 終了=0.3」は厳しすぎるか
+2. 想起カードの出しどころ(成功セッションの終わりだけか)と、「要求しない」との両立
+3. Nano が使えない端末が多いとき、クイズと問いを出さないままでよいか(本文は外に出せない)
+4. テーマ付けに LLM を使うか。使うなら「教えない」原則との線引き
+5. `selection` を問い以外でも取るか(ハイライト)。取るなら道具カテゴリの UI が要る
+6. リフローする本はウィンドウ幅や文字の大きさで総ページ数が変わりうる。本ごとの読んだ区間に違う尺度が混ざる
+
+---
+
+## 付録 A: シーケンス図
+
+関数名・メッセージ名はコードのまま。実線は呼び出し・送信、点線は応答。`LS` は `chrome.storage.local`(セッションの現在値)、`DB` は IndexedDB。
+
+### A1. セッション開始
+
+```mermaid
+sequenceDiagram
+  autonumber
+  actor U as 利用者
+  participant P as popup
+  participant SW as service-worker.js
+  participant SE as session.js
+  participant LS as storage.local
+  participant DB as IndexedDB
+  participant L as loader.js(全フレーム)
+  participant M as main.js(本文フレーム)
+
+  U->>P: 「読む」
+  P->>SW: START_SESSION {tabId}
+  SW->>SW: 拡張のページからか確かめる
+  SW->>SE: startSession(tabId)
+  opt 既存のセッションあり
+    SE->>SE: 終了(manual)
+  end
+  SE->>SE: tabs.get → Play ブックスのリーダーか
+  break それ以外
+    SE-->>P: 「Play ブックスで本を開いてから押してください」
+  end
+  SE->>DB: getState() → 実効θ = θ × (1 ± 0.1)
+  SE->>LS: currentSession = ACTIVE
+  SE->>DB: events += session_start / pages を upsert(書名)
+  SE->>L: executeScript(全フレーム)
+  Note over SE,L: 注入はセッション保存の後(先に注入すると θ=0 を読む)
+  L->>L: 版キーで二重注入を止める / pager を読み込む
+  alt 本文が十分ある
+    L-)M: import(main.js)
+  else 表紙・挿絵
+    L->>L: 本文のページが出るまで待つ(終了が届けば何もしない)
+  end
+  SE->>SE: watchdog(30秒ごと)/ バッジ ●
+  SE-->>P: {ok, session}
+
+  M->>SW: REPORT content_ready {語数, mode}
+  M->>SW: GET_STATUS(セッションが見えるまで最大6回)
+  alt セッションが無い・終わっていた
+    M->>M: 何も始めずに畳む
+  else
+    M->>M: θ → planHints() / 余白・問いのボタン・開始の通知
+  end
+```
+
+### A2. 読書中: 鼓動・ページ送り・めくった直後の出来事
+
+```mermaid
+sequenceDiagram
+  actor U as 利用者
+  participant T as 最上位フレーム(URL の pg=)
+  participant PG as playbooks-pager.js
+  participant SW as service-worker.js / session.js
+  participant M as main.js
+  participant ST as stage.js / margin.js
+  participant AI as ai.js(Nano)
+
+  loop 20秒ごと
+    opt 段落が見えていて、90秒以内に操作かページ送り
+      M->>SW: REPORT dwell_tick → read_ms += 20秒
+      M->>ST: 枠のある段落が見えていれば、余白にヒント(normal / 金 / 虹)
+    end
+  end
+
+  U->>T: ページを送る
+  T->>SW: tabs.onUpdated(同じ本の pg= の変化)
+  SW->>SW: events += page_turn / 無操作の判定を延ばす
+  SW-)M: rs_page_turn
+  PG->>SW: REPORT book_progress {page, total}(1.5秒ごとの見回りで変化を見つけたとき)
+  SW->>SW: 位置を LS に / completion = page/total
+  SW-)M: rs_progress {pct}
+
+  M->>M: 抽選(クイズ 0.25×θ/8・くま 0.35×θ/8)
+  alt クイズが当たり、ストックがある
+    M->>SW: QUIZ_SHOWN {quiz, 素材} → quizzes に保存 → quiz_id
+    M->>ST: quiz(カード)
+    U->>ST: 選ぶ(数字キー・Tab も可)
+    ST->>M: 最初の回答
+    M->>SW: REPORT quiz_answered {quiz_id, correct} → quiz_attempts
+  else くまが当たった
+    M->>ST: うんちく(ストックがあれば65%)/ 顔を出すだけ
+  end
+  M->>M: 0.9秒後、読み終えたページから次のストックを作る
+  M->>SW: QUIZ_REQUEST {本文} → AI: nanoQuiz → {quiz}(まだ記録しない)
+  M->>SW: TRIVIA_REQUEST {本文} → §9(同意があれば単語の候補だけサーバへ)
+
+  opt 1ページずつ進んで最後のページに着いた
+    PG->>SW: REPORT book_end → completion = 100
+    SW-)M: rs_book_end → 読了フィナーレ
+  end
+```
+
+- 生成の依頼は、計測中のタブ以外からは断る(sessionOf)
+- 送るのは計測値と、Nano に渡す読み終えたページの本文だけ。本文は SW の中で Nano に渡り、端末の外へは出ない
+
+### A3. 離脱と復帰
+
+```mermaid
+sequenceDiagram
+  actor U as 利用者
+  participant C as Chrome(tabs / windows)
+  participant SE as session.js
+  participant LS as storage.local
+  participant DB as IndexedDB
+
+  U->>C: 別のタブ・別のアプリへ
+  C->>SE: onActivated / onFocusChanged(常設リスナー)
+  SE->>LS: getCurrent()
+  alt セッションなし
+    SE-->>C: 何も読まず何も書かずに戻る
+  else ACTIVE
+    SE->>DB: events += tab_escape
+    SE->>LS: ESCAPED / escapes++ / 連続を切る
+  end
+  U->>C: 読書タブへ戻る
+  C->>SE: onActivated / onFocusChanged
+  SE->>DB: events += tab_return {away_ms}
+  SE->>LS: ACTIVE / away_total_ms 加算 / 60秒以内なら quick_returns++
+```
+
+### A4. セッション終了と制御器
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant C as Chrome / popup
+  participant SE as session.js
+  participant CT as controller.js
+  participant LS as storage.local
+  participant DB as IndexedDB
+  participant M as main.js
+
+  alt 終える(manual)
+    C->>SE: END_SESSION
+  else タブを閉じた・本の外へ(close)
+    C->>SE: tabs.onRemoved / onUpdated
+  else 無操作・未復帰が3分(idle)/ タブが消えていた(close)
+    C->>SE: alarms → onWatchdog
+  else ブラウザの起動・拡張の更新で取り残されていた(close)
+    C->>SE: onStartup / onInstalled(update) → recoverSession
+    Note over SE: 終わった時刻 = 最後の記録の時刻。ページへの片付け・お祝いはしない
+  end
+  SE->>LS: state = ENDED(二重に走らない)
+  SE->>SE: success = read_ms ≥ 5分 かつ escapes ≤ 1 / S を計算(並走)
+  SE->>DB: events += session_end / sessions += 1行
+  SE->>DB: readings(読んだ区間・reached_end = book_end があったか)/ pages に累計・finished_at
+  SE->>CT: nextState(state, session)
+  CT-->>SE: 短いセッションは据え置き / 成功 ×0.9 / 2連続失敗 ×1.3 / 日次±15% / <0.3 → 0
+  opt θ=0 または再展開中
+    SE->>CT: applyHomeostat(next, 補助なし4週平均)
+  end
+  SE->>DB: theta_update(変わったとき)/ putState / 180日より古い鼓動を消す
+  SE-)M: rs_stop {celebrate}(取り残されていたときは送らない)
+  M->>M: タイマー・監視・リスナーを外し、本文の写しと画像を手放す
+  SE->>LS: currentSession を消す(途中で失敗しても必ず)
+```
+
+- θ の変化は本人に通知しない。制御器に渡るのは行動シグナルだけ
+- 記録・制御の失敗は終了処理を止めない
+
+### A5. 問い(道具)
+
+```mermaid
+sequenceDiagram
+  actor U as 利用者
+  participant O as overlay.js(問いのボタン)
+  participant M as main.js
+  participant SW as service-worker.js
+  participant AI as ai.js(Nano)
+  participant DB as IndexedDB
+
+  U->>O: ボタン → 問いを入力
+  O->>M: onAsk(question)(読書中の活動に数える)
+  M->>SW: ASK_REQUEST {question, 選んだ文字列, 読了済みの直近6段落}
+  SW->>SW: 計測中のタブからか / 長さを切り詰める
+  SW->>AI: nanoAnswer
+  alt Nano が使えない
+    SW-->>M: {ok: false, unavailable} → 使えないことだけを伝える
+  else 回答あり
+    SW->>DB: events += question_asked {文字数} / questions += 問い・答え・ページ・選択
+    SW-->>M: {answer, source_index}
+    M->>O: showAnswer(根拠の段落を光の枠で)
+  end
+```
+
+### A6. オンボーディングとダッシュボード
+
+```mermaid
+sequenceDiagram
+  actor U as 利用者
+  participant C as Chrome
+  participant OB as onboarding
+  participant D as dashboard
+  participant SW as service-worker.js
+  participant DB as IndexedDB
+
+  C->>SW: onInstalled(install)
+  SW->>C: onboarding.html を開く
+  U->>OB: 診断 → 目標 → うんちくの同意
+  OB->>SW: COMPLETE_ONBOARDING {answers, goal}
+  SW->>DB: 実績ゼロかつ未完了なら θ = 表[合計点] / 目標・回答・onboarded_at
+  OB->>OB: 同意を storage.local に
+
+  U->>D: 開く
+  D->>DB: 集計(本棚・帯・推移・KPI・累計)を直接読む
+  opt 目標を変える / 全消去 / 同意を切り替える
+    D->>SW: SET_GOAL / WIPE_ALL(終了 → 全ストアと storage → インストール ID)
+  end
+```
+
+- 読み取りは拡張のページから直接、書き込みは SW 経由(state への書き込みを制御器と揃える)
+- 特権の操作(開始・終了・全消去・目標・オンボーディング)は拡張のページからだけ受け、読んでいるページに入ったスクリプトからは受けない

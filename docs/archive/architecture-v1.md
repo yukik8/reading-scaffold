@@ -1,9 +1,11 @@
 # Architecture v1: reading-scaffold
 
+> **ARCHIVED(2026-10-08)。** 本書は歴史資料。現行の設計は [../design.md](../design.md)(この文書を含む5本を統合した唯一の設計書)。本書の時点は v0.14〜0.21(Web 記事前提の記述が残る)。
+
 - **Status:** 唯一のsource of truth(2026-09-14)。旧 `design-doc-v0.md` は `docs/archive/` に移し、本書が置き換える
 - **対応コード:** v0.13.0 時点の実装に一致させて書いている。「計画」と明記した項以外は現物
 - **Audience:** 実装者(本人+AI)。製品の Why は PRD v2(リポジトリ外)に委ね、本書は What/How
-- **関連:** [reward-design.md](reward-design.md)(演出の設計判断) / [data-design.md](data-design.md)(データ3層) / [ask-and-nano-design.md](ask-and-nano-design.md)(問いと生成基盤) / [research/](research/)(文献)
+- **関連:** [reward-design.md](reward-design.md)(演出の設計判断) / [data-design.md](data-design-v2.md)(データ3層) / [ask-and-nano-design.md](ask-and-nano-design.md)(問いと生成基盤) / [research/](../research/)(文献)
 
 ---
 
@@ -172,7 +174,7 @@ completion = completion_pct / 100
 ending     = manual:1 / close:0.7 / idle:0.3
 ```
 
-**Sに入れないもの(不変条件):** ヒント/演出の回数、クイズ正誤、問いの数、目標達成、連続日数、その他あらゆるエンゲージメント指標。理解を制御に入れると「簡単な問題を出せばθが下がる」自己目的化回路ができる([data-design.md §3](data-design.md))。理解はKPIのガードレール(評価レイヤー)にだけ使う。
+**Sに入れないもの(不変条件):** ヒント/演出の回数、クイズ正誤、問いの数、目標達成、連続日数、その他あらゆるエンゲージメント指標。理解を制御に入れると「簡単な問題を出せばθが下がる」自己目的化回路ができる([data-design.md §3](data-design-v2.md))。理解はKPIのガードレール(評価レイヤー)にだけ使う。
 
 係数は仮置き。ドッグフーディングで二値 success との一致率を見てから調整する。
 
@@ -242,7 +244,7 @@ ending     = manual:1 / close:0.7 / idle:0.3
 
 ### Phase 2: MemoryItem と想起プロンプト(計画)
 
-> 2026-10-07: データモデルは [data-design.md](data-design.md) v2 §2.4 の `passages` / `marks` / `recalls` に置き換えた(主張は `marks` の claim、再想起は `recalls`)。下の `memory_items` は経緯として残す。作られ方・LLM の役割・θ との関係はそのまま有効。
+> 2026-10-07: データモデルは [data-design.md](data-design-v2.md) v2 §2.4 の `passages` / `marks` / `recalls` に置き換えた(主張は `marks` の claim、再想起は `recalls`)。下の `memory_items` は経緯として残す。作られ方・LLM の役割・θ との関係はそのまま有効。
 
 「読んだものが自分の知識として残る」の実体。原則は **retrieval practice(自分で思い出す) > LLM要約**。LLMが本文を要約して溜めたものは数ヶ月でゴミになる。本人が想起した記憶だけを資産にする。
 
@@ -275,7 +277,7 @@ memory_items(記録層・ローカルのみ)
 - `sessions` の1行: `{ session_id, date, started_at, domain, page_id, theta, theta_base, read_ms, escapes, completion_pct, success, stability, reason, away_total_ms, quick_returns, hints_shown, effects_shown, longest_streak_ms }`。`stability` が S(v0.14〜・並走計測)
 - `events.type`: session_start / dwell_tick / scroll / tab_escape / tab_return / hint_shown / hint_clicked / effect_shown / quiz_answered / question_asked / session_end / theta_update
 - プロフィール別設定(`chrome.storage.local`): `demo_enabled`(演出の増幅のみ。計測・制御・記録に影響しない・既定OFF)
-- `readings` の1行(v0.19・DB v4): `{ session_id, page_id, date, started_at, ended_at, range{from, to, furthest, total}, page_turns, read_ms, reached_end }`。本のページで表した読んだ区間。Play ブックスで位置が読めたセッションだけ。詳細は [data-design.md](data-design.md) §2.2
+- `readings` の1行(v0.19・DB v4): `{ session_id, page_id, date, started_at, ended_at, range{from, to, furthest, total}, page_turns, read_ms, reached_end }`。本のページで表した読んだ区間。Play ブックスで位置が読めたセッションだけ。詳細は [data-design.md](data-design-v2.md) §2.2
 - 全消去は1タップで8ストア+storage を空にする(記録層=資産も含む。「計測だけ消す」は将来)
 - エクスポートはJSON(資産なので持ち出せる)
 

@@ -6,17 +6,19 @@ Google Play ブックス(ウェブ版)で本を読む時間を支える Chrome �
 効果は **「週次目標の達成率 × θ(補助量)の推移」** の対で測る — 達成を保ったまま補助が
 減り続けなければ機構の失敗と判定する(KPIの経緯と根拠: [docs/research/benchmark.md](docs/research/benchmark.md) §5)。
 
-- 全体像(最初に読む): [docs/overview.md](docs/overview.md)
-- 設計(一次資料): [docs/architecture-v1.md](docs/architecture-v1.md) — 三分法(演出/記録/道具)・θ一本の漸減・不変条件
-- データ設計: [docs/data-design.md](docs/data-design.md)
+- 設計(唯一の一次資料): [docs/design.md](docs/design.md) — θ・三分法(演出/記録/道具)・制御器・演出・データ・不変条件
+- 公開の手順(ストア申請・Vercel・zip): [docs/release.md](docs/release.md)
 - プライバシーポリシー(公開用): [PRIVACY.md](PRIVACY.md)
-- うんちくサーバと Vercel へのデプロイ: [server/README.md](server/README.md)
-- ステータス: v0.21 / Play ブックス専用。Chrome ウェブストア公開の準備中
+- うんちくサーバの運用: [server/README.md](server/README.md)
+- 文献の調査: [docs/research/](docs/research/)。古い設計書は [docs/archive/](docs/archive/)
+- ステータス: v0.21.1 / Play ブックス専用。Chrome ウェブストア公開の準備中
 
-## 原則(コードで守るもの)
+## 原則(コードで守るもの・抜粋)
 
-1. **ページを改変しない。** 追加するのは Shadow DOM 内のオーバーレイのみ。演出は本文の外(余白)に描き、文字の上に重ねない。
-2. **計測はセッション中のみ。** 「読む」を押してから終えるまで。タブ観測の全ハンドラは最初にセッションの存在を確認し、無ければ何も読まず何も書かずに戻る(判断の詳細は [session.js](extension/src/background/session.js) 冒頭)。
+全10条は [docs/design.md §11](docs/design.md#11-不変条件コードで守るもの)。
+
+1. **ページを改変しない。** 追加するのは Shadow DOM の中の層だけ。演出は本文の外(余白)に描き、文字の上に重ねない。
+2. **計測はセッション中のみ。** 「読む」を押してから終えるまで。タブ観測の全ハンドラは最初にセッションの存在を確認し、無ければ何も読まず何も書かずに戻る。
 3. **θの目標値は常に0。** エンゲージメント指標を制御器の入力にしない(スロットマシン化の構造的禁止)。演出の量と派手さはθに比例し、θ=0では何も出さない。
 4. **本の本文は端末の外へ出さない。** Google Play の規約で購入した本の送信・再配布は禁止のため。クイズと問いへの答えは端末内の Gemini Nano だけで作る。うんちくのサーバへ送るのは、本人が同意したときに限り、端末で選んだ単語の候補だけ。
 5. **記録はローカルのみ。** 計測・読書メモリは IndexedDB に留め、サーバへは出さない。
@@ -44,10 +46,6 @@ docs/                 設計ドキュメント(古い版は docs/archive/)
 - ストア版(manifest に `update_url` が付く)は本番のサーバを呼び、開発用の機能(θの手動上書き・デモ・デモデータ投入・開始通知のθ表示)を出さない。切り替えは `extension/src/shared/config.js` の `IS_STORE_BUILD`。
 - クイズと問いには Chrome の内蔵AI(Gemini Nano・Chrome 138 以降)が要る。ダッシュボードの「内蔵AIを確認・準備」でダウンロードを始められる。
 
-## ストアに出す zip
+## ストアに出す
 
-```bash
-cd extension && zip -r ../reading-scaffold-$(node -p "require('./manifest.json').version").zip manifest.json src -x '*.DS_Store'
-```
-
-docs・server・.git は入れない。zip を展開したものを「パッケージ化されていない拡張機能」として読み込み、動作を確かめてから申請する。
+zip の作り方・出す前の確認・申請の書き方は [docs/release.md](docs/release.md)。
