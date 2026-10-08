@@ -27,7 +27,7 @@ ID が無いと 401、1日の上限を超えると 429。
    IP ごと `RS_LIMIT_PER_IP`(既定400)、全体 `RS_LIMIT_GLOBAL`(既定20000)。
    Upstash Redis の環境変数があればそこで数え、無ければインスタンスのメモリで数える(目安にしかならない)。
 2. **入力の上限**: 8語・各16字まで。空白・記号・URL を含む語は捨てる。本文は受け付けない。
-3. **タイムアウト**: Anthropic 呼び出しは12秒・再試行1回(拡張は15秒で諦める)。関数の上限は30秒(`vercel.json`)。
+3. **タイムアウト**: Anthropic 呼び出しは12秒・再試行1回(拡張は15秒で諦める)。関数の上限は Vercel の既定のまま。
 4. **最後の砦: Anthropic Console の利用額の上限。** このサーバ専用の workspace と API キーを作り、
    月の上限額を設定しておく。
 5. ストア公開後、拡張の ID が決まったら `RS_ALLOWED_ORIGINS=chrome-extension://<id>` を入れると、
@@ -47,15 +47,23 @@ echo 'ANTHROPIC_API_KEY=sk-ant-...' > .env                             # 鍵は�
 
 ## Vercel にデプロイ
 
-1. Vercel でこのリポジトリを Import し、**Root Directory を `server`** にする(`main.py` の `app` が自動で入口になる)。
-2. Environment Variables(Production):
-   - `ANTHROPIC_API_KEY`(必須。上の専用キー)
-   - `RS_MODEL`(任意。既定 `claude-opus-5`)
-   - `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN`(任意・推奨。Marketplace の Upstash を繋ぐと入る)
-   - `RS_LIMIT_PER_INSTALL` / `RS_LIMIT_PER_IP` / `RS_LIMIT_GLOBAL`(任意)
-   - `RS_ALLOWED_ORIGINS`(ストア公開後)
-3. デプロイして `https://<本番ドメイン>/healthz` が `{"ok": true}` を返すことを確かめる。
-4. 本番ドメインが `reading-scaffold.vercel.app` でなければ、`extension/src/shared/config.js` の `SERVER.base` を直す。
-   拡張は Preview の URL(保護がかかっている)ではなく本番ドメインを呼ぶ。
+Vercel のプロジェクト `reading-scaffold`(yukik8s-projects)に、`server/` から CLI で出す。
+Git 連携はしていないので、push しても自動ではデプロイされない。
+
+```bash
+cd server
+vercel deploy --prod      # 本番(https://reading-scaffold.vercel.app)
+vercel deploy             # 確認用の Preview(保護つき。`vercel curl /healthz --deployment <URL>` で叩ける)
+```
+
+- `vercel.json` の `"framework": "fastapi"` で、`main.py` の `app` が入口になる。
+- 環境変数(Production)。変えたら `vercel deploy --prod` で出し直すまで反映されない:
+  - `ANTHROPIC_API_KEY`(必須。上の専用キー)
+  - `RS_MODEL`(任意。既定 `claude-opus-5`)
+  - `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN`(任意・推奨。Marketplace の Upstash を繋ぐと入る)
+  - `RS_LIMIT_PER_INSTALL` / `RS_LIMIT_PER_IP` / `RS_LIMIT_GLOBAL`(任意)
+  - `RS_ALLOWED_ORIGINS`(ストア公開後)
+- 出したら `https://reading-scaffold.vercel.app/healthz` が `{"ok": true}` を返すことを確かめる。
+  拡張は Preview の URL ではなく、この本番ドメインを呼ぶ(`extension/src/shared/config.js` の `SERVER.base`)。
 
 `.env`・`.venv` は `.vercelignore` でアップロードしない。Python は 3.12(`.python-version`)。
