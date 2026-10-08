@@ -25,6 +25,7 @@ export const EventType = {
   SESSION_END: 'session_end',
   THETA_UPDATE: 'theta_update', // { from, to, reason } 制御器の動き(本人には通知しない・分析用)
   PAGE_TURN: 'page_turn', // {} Play ブックスのページ送り(URLの pg= の変化)
+  PAGE_READ: 'page_read', // { words, ms, d } めくる直前まで見えていたページ(語数・滞在時間・難しさ0〜1)。速さの素材
 };
 
 export const SessionState = {

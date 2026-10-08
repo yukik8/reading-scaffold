@@ -24,9 +24,11 @@ const {
   FORESHADOW,
   CEILING,
   PAGE_CURL,
+  DIFFICULTY,
   IS_STORE_BUILD,
   readDemoFlag,
 } = await mod('src/shared/config.js');
+const { difficultyOf, weightedSample } = await mod('src/content/difficulty.js');
 const { createOverlay, setTextColumn, setDemoTheta, setDemoEnabled } =
   await mod('src/content/overlay.js');
 const { Paint, clearSprites } = await mod('src/content/paint.js');
@@ -223,6 +225,20 @@ function scheduleTextColumn() {
 }
 updateTextColumn();
 addEventListener('resize', updateTextColumn, { passive: true });
+
+// いま見えている段落の語数(ページ送りの直前の「読んだページ」の大きさ)
+function visibleWords() {
+  let n = 0;
+  for (const i of visible) n += countWords(textOf(paragraphs[i]));
+  return n;
+}
+
+// 読む速さの素材: このページを開いてからの時間。離脱(非表示)を挟んだページは標本にしない
+let pageStartedAt = Date.now();
+let pageInterrupted = false;
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) pageInterrupted = true;
+});
 
 function visibleRange() {
   if (visible.size === 0) return null;
@@ -432,6 +448,23 @@ function carryOverPassedSlot(idx) {
 }
 let theta = 0;
 let hintsShown = 0;
+
+// 段落の難しさ(0〜1・遅延計算)。θ が下がるほどヒント枠を難しい段落へ寄せる(易しい所から先に消える)
+const difficultyAt = new Map();
+function difficultyOfIdx(idx) {
+  let d = difficultyAt.get(idx);
+  if (d === undefined) {
+    d = difficultyOf(textOf(paragraphs[idx]));
+    difficultyAt.set(idx, d);
+  }
+  return d;
+}
+function pickSlots(candidates, n) {
+  if (!DIFFICULTY.enabled) return shuffled(candidates).slice(0, n);
+  const k = DIFFICULTY.focusMax * (1 - Math.min(1, theta / THETA_MAX));
+  if (k <= 0) return shuffled(candidates).slice(0, n);
+  return weightedSample(candidates, (idx) => (0.1 + difficultyOfIdx(idx)) ** k, n);
+}
 let pendingHintAt = new Set(); // ヒントを出す段落index
 // レア度は計画時に事前ロールする(v0.11.0)。発火の瞬間ではなく前から決まっている
 // ことで「先触れ」(予期の窓)が作れる。ドーパミンはcueで出る — 待ちを設計する。
@@ -449,7 +482,7 @@ function planHints() {
   let candidates = [];
   for (let i = Math.max(1, maxDepthIdx + 1); i < paragraphs.length; i += 1) candidates.push(i);
   if (candidates.length === 0) candidates = paragraphs.map((_, i) => i);
-  for (const idx of shuffled(candidates).slice(0, remaining)) {
+  for (const idx of pickSlots(candidates, remaining)) {
     pendingHintAt.add(idx);
     pendingTierAt.set(idx, rollTier());
   }
@@ -472,7 +505,7 @@ function planHintsFor(idxs, words) {
   const exact = (theta * words) / 1000 + hintCarry;
   const n = Math.min(idxs.length, Math.floor(exact));
   hintCarry = Math.min(exact - n, 1);
-  for (const idx of shuffled(idxs).slice(0, n)) {
+  for (const idx of pickSlots(idxs, n)) {
     pendingHintAt.add(idx);
     pendingTierAt.set(idx, rollTier());
   }
@@ -746,8 +779,19 @@ let stopped = false;
 
 /** 既読で、いま見えていない段落の本文。新しい方から遡って集め、読んだ順に並べる。 */
 function readTextForEvents() {
+  return readPageForEvents().text;
+}
+
+/**
+ * 読み終えたページの本文と、その中で最も難しい段落(クイズの焦点)。
+ * 焦点を難しい段落に置くのは、θ が下がるにつれ随伴性の重心を「読む→光」から「わかる→光」へ
+ * 移すため(docs/research/reward.md 3-3)。クイズの頻度は θ 配下のまま変えない。
+ */
+function readPageForEvents() {
   const picked = [];
   let chars = 0;
+  let focus = '';
+  let focusD = -1;
   for (let k = seenOrder.length - 1; k >= 0 && picked.length < 12; k -= 1) {
     const idx = seenOrder[k];
     if (visible.has(idx)) continue;
@@ -755,9 +799,16 @@ function readTextForEvents() {
     if (!t) continue;
     picked.unshift(t);
     chars += t.length;
+    if (DIFFICULTY.enabled && t.length >= 40) {
+      const d = difficultyOfIdx(idx);
+      if (d > focusD) {
+        focusD = d;
+        focus = t;
+      }
+    }
     if (chars >= PAGE_EVENTS.maxTextChars) break;
   }
-  return picked.join('\n').slice(-PAGE_EVENTS.maxTextChars);
+  return { text: picked.join('\n').slice(-PAGE_EVENTS.maxTextChars), focus };
 }
 
 /** ことば吹雪の文字: 読み終えたページから漢字を中心に拾う(小書きのかな・記号は除く)。 */
@@ -787,13 +838,17 @@ function validQuiz(q) {
 async function prefetch(kind) {
   if (!EVENTS_ON || stopped || theta <= 0 || stock[kind] || inFlight[kind]) return;
   if (pageTurns < retryAt[kind]) return;
-  const text = readTextForEvents();
+  const { text, focus } = readPageForEvents();
   if (text.length < PAGE_EVENTS.minTextChars) return;
   inFlight[kind] = true;
   const turn = pageTurns;
   try {
     if (kind === 'quiz') {
-      const res = await chrome.runtime.sendMessage({ type: Msg.QUIZ_REQUEST, paragraph_text: text });
+      const res = await chrome.runtime.sendMessage({
+        type: Msg.QUIZ_REQUEST,
+        paragraph_text: text,
+        focus_text: focus,
+      });
       if (res?.ok && validQuiz(res.quiz)) {
         stock.quiz = { quiz: res.quiz, text, turn };
       }
@@ -1034,6 +1089,18 @@ function onMessage(msg) {
     markInteraction();
     scheduleTextColumn();
     pageTurns += 1;
+    // 読む速さ: めくった直後はまだ前のページが見えているので、その語数と滞在時間を1標本として送る
+    {
+      const now = Date.now();
+      const words = visibleWords();
+      if (!pageInterrupted && words > 0) {
+        const ds = [...visible].map(difficultyOfIdx);
+        const d = ds.length ? Math.round((ds.reduce((a, b) => a + b, 0) / ds.length) * 100) / 100 : null;
+        report(EventType.PAGE_READ, { words, ms: now - pageStartedAt, d });
+      }
+      pageStartedAt = now;
+      pageInterrupted = false;
+    }
     stage.dismissCorner(); // さっきのページのうんちくは引っ込める
     maybePageShower();
     maybePageEvent();

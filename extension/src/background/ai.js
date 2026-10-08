@@ -143,11 +143,13 @@ const QUIZ_SCHEMA = {
  * 段落から3択クイズを1問。生成できなければnull(呼び手は何も出さない)。
  * 言葉の原則: 出題のみ。解説・褒め・アドバイスは書かせない。
  */
-export async function nanoQuiz(paragraphText) {
+export async function nanoQuiz(paragraphText, focusText = '') {
   const sys =
     'あなたは読解クイズの出題者。渡された段落の内容だけから、理解を確かめる3択クイズを1問作る。' +
     '本文と同じ言語で出題する。解説・褒め言葉・アドバイスは一切書かない。';
-  const user = `次の段落から3択クイズを1問。正解は段落を読んでいれば分かるものにする。\n---\n${paragraphText}`;
+  // 焦点(ページで最も難しい段落)があれば、そこの理解を確かめる問いにする
+  const focus = focusText && paragraphText.includes(focusText) ? `\n特に次の箇所の理解を確かめる問いにする:\n${focusText}\n` : '';
+  const user = `次の段落から3択クイズを1問。正解は段落を読んでいれば分かるものにする。${focus}\n---\n${paragraphText}`;
   return acceptQuiz(await promptJson(sys, user, QUIZ_SCHEMA));
 }
 

@@ -9,7 +9,7 @@
 //   2. 1日の総変化は±maxDailyChangeRatioまで。
 //   3. 卒業(θ=0)後は監視のみ。再展開はホメオスタットだけが行う。再展開中も目標は0(漸減は続く)。
 
-import { THETA_MAX, CONTROLLER, SUCCESS, THETA_NOISE, STABILITY } from '../shared/config.js';
+import { THETA_MAX, CONTROLLER, SUCCESS, THETA_NOISE, STABILITY, PACE } from '../shared/config.js';
 
 export function isSuccess(session) {
   return session.read_ms >= SUCCESS.minReadMs && session.escapes <= SUCCESS.maxEscapes;
@@ -24,9 +24,33 @@ export function isNeutral(session) {
 }
 
 /**
+ * ページごとの速さの要約。standard の中身は { words, ms } の列(content が page_read で送る)。
+ * 語数/分の中央値、変動係数、詰まった/流したページの数。標本が足りなければ null。
+ * @returns {{ pages: number, wpm: number, cv: number, slow: number, fast: number } | null}
+ */
+export function paceSummary(samples) {
+  const rates = (samples ?? [])
+    .filter((s) => s.ms >= PACE.minPageMs && s.ms <= PACE.maxPageMs && s.words >= PACE.minPageWords)
+    .map((s) => s.words / (s.ms / 60_000));
+  if (rates.length < 3) return null;
+  const sorted = [...rates].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  const median = sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+  const mean = rates.reduce((a, b) => a + b, 0) / rates.length;
+  const sd = Math.sqrt(rates.reduce((a, r) => a + (r - mean) ** 2, 0) / rates.length);
+  return {
+    pages: rates.length,
+    wpm: Math.round(median),
+    cv: Math.round((sd / mean) * 1000) / 1000,
+    slow: rates.filter((r) => r < median / PACE.slowRatio).length, // 遅い = 語数/分が小さい
+    fast: rates.filter((r) => r > median / PACE.fastRatio).length,
+  };
+}
+
+/**
  * 読書安定度 S ∈ [0,1]。行動シグナルだけから計算する(理解・エンゲージメント指標は入れない)。
- * v0.14 は並走計測のみで、nextState はまだ isSuccess を使う。
- * @param {object} session - { read_ms, escapes, away_total_ms, quick_returns, completion_pct }
+ * SUCCESS.judge === 'stability' のとき outcomeOf がこれを3値に切って制御器へ渡す。
+ * @param {object} session - { read_ms, escapes, away_total_ms, quick_returns, pace_cv }
  * @param {string} reason - 終了理由 manual | close | idle
  */
 export function stabilityScore(session, reason) {
@@ -39,16 +63,34 @@ export function stabilityScore(session, reason) {
     clamp01(1 - escapes / STABILITY.escapeFullCount) *
     clamp01(1 - (session.away_total_ms ?? 0) / STABILITY.awayFullMs);
   const returnTerm = escapes > 0 ? clamp01((session.quick_returns ?? 0) / escapes) : 1;
-  const completion = clamp01((session.completion_pct ?? 0) / 100);
+  // 速さのばらつきが小さい = 一定の調子で読めた。標本が無い(短い・計れない)ときは中立
+  const steady =
+    typeof session.pace_cv === 'number' ? clamp01(1 - session.pace_cv / STABILITY.steadyCvFull) : 0.5;
   const ending = STABILITY.ending[reason] ?? STABILITY.ending.idle;
 
   const s =
     w.dur * dur +
     w.escape * escapeTerm +
     w.return * returnTerm +
-    w.completion * completion +
+    w.steady * steady +
     w.ending * ending;
   return Math.round(clamp01(s) * 1000) / 1000;
+}
+
+/**
+ * 制御器へ渡す成否。'success' | 'fail' | 'neutral'。
+ * binary: isSuccess / isNeutral(v0.21 と同じ)。
+ * stability: S ≥ successAt → 成功、S ≤ failAt → 失敗、間は据え置き(学ばない)。
+ *   中立セッション(ほぼ読まず離れてもいない)はどちらでも据え置き。
+ */
+export function outcomeOf(session) {
+  if (isNeutral(session)) return 'neutral';
+  if (SUCCESS.judge === 'stability' && typeof session.stability === 'number') {
+    if (session.stability >= STABILITY.successAt) return 'success';
+    if (session.stability <= STABILITY.failAt) return 'fail';
+    return 'neutral';
+  }
+  return isSuccess(session) ? 'success' : 'fail';
 }
 
 /**
@@ -81,9 +123,10 @@ export function nextState(state, session, today) {
     day = today;
     day_start_theta = theta;
   }
-  if (isNeutral(session)) return { ...state, day, day_start_theta };
+  const outcome = outcomeOf(session);
+  if (outcome === 'neutral') return { ...state, day, day_start_theta };
 
-  const success = isSuccess(session);
+  const success = outcome === 'success';
   if (success) {
     success_streak += 1;
     fail_streak = 0;

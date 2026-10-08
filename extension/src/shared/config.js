@@ -9,6 +9,8 @@ export const THETA_MAX = 8;
 export const CONTROLLER = {
   // W3で有効化(2026-08-16)。セッション終了ごとに基準θが自動で動く。
   enabled: true,
+  // 'fixed'(v0.21 の固定則)| 'staircase'(閾値推定・staircase.js)。tools/replay で比べてから切り替える
+  policy: 'fixed',
 
   // 成功セッションごとに θ ← θ×(1−alpha)。10%はJND未満(本人に通知しない)
   alpha: 0.1,
@@ -29,6 +31,26 @@ export const CONTROLLER = {
   homeostatWindowWeeks: 4,
   // ごく短く、離れてもいないセッション(誤って開始・本の切り替え)は成否に数えない
   neutralBelowMs: 60_000,
+};
+
+// 閾値推定の制御器(staircase.js・v0.22)。CONTROLLER.policy で切り替える。
+// その人の「読める最低の θ」をセッションの成否から推定し、成功確率が target を保てる
+// 最も低い θ に向けて動かす。θ の量を AI や学習に任せるのではなく、2〜3個の
+// パラメータを持つ曲線をその人のデータで当てはめる(n=1・数十回で収束する)。
+export const STAIRCASE = {
+  target: 0.75, // この成功確率になる点(閾値の少し上)を目指す。λ と合わせて余白 ≈ 閾値×2 になる
+  gamma: 0.15, // 補助がなくても読める確率(事前の見込み。実際に高い人は閾値が下に推定される)
+  lambda: 0.1, // 生活のノイズ: θ がいくら高くても失敗する確率
+  w: 0.5, // 閾値の鈍さ(log θ の尺度。0.5 ≈ θ の ±65% で成功率が大きく変わる)
+  gridMin: 0.05, // 閾値グリッドの下端(θ)
+  gridAboveMax: 1.5, // 上端は log(THETA_MAX) + これ(「最大量でも足りない」閾値を表せるように)
+  gridN: 64,
+  driftSd: 0.12, // 閾値が1セッションに動きうる幅(log θ)= 忘却の速さ。習慣で閾値が下がるのを追う
+  raiseHysteresis: 1.05, // 目標点がいまの θ の 5% 以内なら上げない(揺れで上げない)
+  knownSd: 0.5, // 事後分布の幅(log θ)がこれ以下なら「閾値が分かった」とみなし、余白の中では下げない
+  // 探索の保留(micro-randomization): 下げる場面でもこの確率で据え置き、「下げたせいで
+  // 読めなくなったか」を後から比べられるようにする。卒業が遅れるので既定は 0(使わない)
+  exploreHoldP: 0,
 };
 
 // セッションごとの実効θ = θ × (1±この幅の乱数)。
@@ -156,6 +178,15 @@ export const PAGE_CURL = {
 // 先触れ(予期の設計・v0.11.0): レア以上はヒント計画時に事前ロールし、発火が近づくと
 // 地のきらきらが金(激レアは虹)に変わる。ドーパミンは報酬でなくcueと予測誤差で出る
 // (Schultz 1997)ため、予期の窓を作る。予告は必ず当たる(ニアミス禁止)。
+// 段落の難しさ(content/difficulty.js)で、ヒント枠の配分と突然クイズの素材を決める。
+// 枠の重み = (0.1 + 難しさ)^k、k = focusMax × (1 − θ/THETA_MAX)。
+// θ が最大のとき k=0(一様 = 今までどおり)、θ が下がるほど難しい段落に寄る — 易しい所から先に消える。
+// 頻度は θ が決めたまま(枠の数は変えない)。どこに出るかは乱数のままで、予測できなさは残る。
+export const DIFFICULTY = {
+  enabled: true,
+  focusMax: 3,
+};
+
 export const FORESHADOW = {
   // 何段落先までを「近い」とみなして先触れを始めるか
   aheadParagraphs: 4,
@@ -236,13 +267,29 @@ export const PAGE_SHOWER = {
 // セッションの集計・本・読んだ区間・クイズ・問いは本人が消すまで残す(本人の資産)。
 export const RETENTION = {
   detailEventsDays: 180,
-  detailEventTypes: ['dwell_tick', 'scroll'],
+  detailEventTypes: ['dwell_tick', 'scroll', 'page_read'],
 };
 
 // success := read_ms >= 5分 かつ escapes <= 1
 export const SUCCESS = {
   minReadMs: 5 * 60_000,
   maxEscapes: 1,
+  // 制御器が読む成否の決め方。'binary' は上の2条件、'stability' は読書安定度 S を
+  // STABILITY.successAt / failAt で3値(成功・失敗・据え置き)に切る。
+  // binary は緩く(5分読めばほぼ成功)、θ と無関係に成功が並ぶ = 制御器に情報が届かない。
+  // tools/replay で並走データの一致率を見てから 'stability' に切り替える
+  judge: 'binary',
+};
+
+// 読む速さ(ページごとの 語数 ÷ 滞在時間)。離脱・5分より早く・細かく「詰まった/流した」が見える。
+// その人の速さの分布は sessions の pace_wpm から取る(端末内)。
+export const PACE = {
+  minPageMs: 3_000, // これより短い滞在は「めくり飛ばし」(読んでいない)。速さの標本に入れない
+  maxPageMs: 10 * 60_000, // これより長い滞在は放置。標本に入れない
+  minPageWords: 20, // 挿絵・章題だけのページは標本に入れない
+  maxSamples: 400, // 1セッションに持つ標本の上限
+  slowRatio: 2, // 中央値のこの倍より遅いページ = 詰まった
+  fastRatio: 0.4, // 中央値のこの倍より速いページ = 流した
 };
 
 // 読書安定度 S ∈ [0,1](docs/design.md §4)。二値successの粗さ(20分読んで1回逸れた人と
@@ -250,16 +297,30 @@ export const SUCCESS = {
 // v0.14: 並走計測のみ。sessions.stability に保存して二値と一致率を見る。制御には繋がない。
 // 不変条件: 入力は行動シグナルだけ。ヒント数・演出数・クイズ正誤・問いの数・目標達成・
 // 連続日数などエンゲージメント/理解の指標は入れない(自己目的化回路を作らない)。
+// v0.22: completion(本の中の位置 — その回の読み方と無関係に後半ほど高くなる)を
+// steady(ページの速さのばらつきの小ささ)に置き換え、ending の重みを下げた(終了ボタンを
+// 押したかどうかで成否が割れないように)。
 export const STABILITY = {
-  weights: { dur: 0.4, escape: 0.25, return: 0.15, completion: 0.1, ending: 0.1 },
+  weights: { dur: 0.45, escape: 0.25, return: 0.15, steady: 0.1, ending: 0.05 },
   durFullMin: 20, // この分数で読書時間の項が満点
   escapeFullCount: 3, // この回数の離脱で離脱項が0
   awayFullMs: 3 * 60_000, // 累計でこれだけ離れていたら離脱項が0
   quickReturnMs: 60_000, // これ以内の復帰を「すぐ戻った」と数える
-  ending: { manual: 1, close: 0.7, idle: 0.3 },
+  ending: { manual: 1, close: 0.8, idle: 0.6 },
+  steadyCvFull: 1.0, // 速さの変動係数(標準偏差/平均)がこれで steady 項が 0。標本が無ければ 0.5
   // 制御接続時の閾値(並走中は未使用): S≥successAtで成功、S≤failAtで失敗、間は据え置き
   successAt: 0.7,
   failAt: 0.3,
+};
+
+// 記憶の層(docs/design.md §8・background/memory.js)。読んだものが自分の知識として残る、の実体。
+// 原則: 自分で思い出す(retrieval practice)> 要約。本人が残した主張・問うたこと・答えたクイズを、
+// FSRS-5(shared/fsrs.js)の間隔で思い出す。演出なし・褒めない・催促しない(記録カテゴリ)。
+export const MEMORY = {
+  desiredRetention: 0.9, // 思い出せる確率がここまで落ちた日に出す(FSRS の目標保持率)
+  maxDuePerVisit: 5, // ダッシュボードを開いたとき出す上限(残りは次回)
+  claimMaxChars: 120, // 主張は一文(読んだ直後に、本人の言葉で)
+  retentionDays: [7, 30], // 「時間がたっても残っていること」の節目
 };
 
 // 週次目標(評価レイヤーのKPI)。ユーザーが自分で選ぶ。段階が上がると評価だけが厳しくなる。

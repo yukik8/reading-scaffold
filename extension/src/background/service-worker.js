@@ -192,7 +192,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // 同じ段落から作って出したことのあるクイズがあれば、それをもう一度出す(作り直さない)
         const hash = await sha256Hex(text);
         const existing = await getQuizByHash(hash).catch(() => null);
-        const quiz = existing ? acceptQuiz(existing) : await nanoQuiz(text);
+        const focus = String(msg.focus_text ?? '').trim().slice(0, 600);
+        const quiz = existing ? acceptQuiz(existing) : await nanoQuiz(text, focus);
         if (!quiz) {
           sendResponse({ ok: false, error: 'unavailable' });
           break;
