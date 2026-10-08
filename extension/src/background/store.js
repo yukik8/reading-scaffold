@@ -5,11 +5,13 @@
 //   制御層: state(単一レコード・連続θ)
 //   記録層: pages(本) / readings(読んだ区間) / quizzes / quiz_attempts / questions
 //           (読書メモリ=本人の資産。ローカルのみ)
+//   記憶層(v5): marks(本人が残した主張) / memory_items(思い出す項目と FSRS の状態) /
+//           recalls(想起の記録・append-only)
 
 import { THETA_MAX } from '../shared/config.js';
 
 const DB_NAME = 'reading-scaffold';
-const DB_VERSION = 4;
+const DB_VERSION = 5;
 
 let dbPromise = null;
 
@@ -64,6 +66,21 @@ export function openDb() {
         const readings = db.createObjectStore('readings', { keyPath: 'session_id' });
         readings.createIndex('by_page', 'page_id');
         readings.createIndex('by_started', 'started_at');
+      }
+      // v5: 記憶の層(docs/design.md §8)。本人が残した主張、思い出す項目(FSRS)、想起の記録
+      if (!db.objectStoreNames.contains('marks')) {
+        const marks = db.createObjectStore('marks', { keyPath: 'mark_id', autoIncrement: true });
+        marks.createIndex('by_page', 'page_id');
+      }
+      if (!db.objectStoreNames.contains('memory_items')) {
+        const items = db.createObjectStore('memory_items', { keyPath: 'item_id' });
+        items.createIndex('by_due', 'due');
+        items.createIndex('by_page', 'page_id');
+      }
+      if (!db.objectStoreNames.contains('recalls')) {
+        const recalls = db.createObjectStore('recalls', { keyPath: 'recall_id', autoIncrement: true });
+        recalls.createIndex('by_item', 'item_id');
+        recalls.createIndex('by_page', 'page_id');
       }
     };
     req.onsuccess = () => {
@@ -250,6 +267,39 @@ export function getAllReadings() {
   return run('readings', 'readonly', (s) => s.getAll()).then((rows) => rows ?? []);
 }
 
+// ---- 記憶層 ---------------------------------------------------------------
+
+/** 本人が残した主張(記録層の「本人が起点の痕跡」)。mark_id を返す。 */
+export function addMark(mark) {
+  return run('marks', 'readwrite', (s) => s.add(mark));
+}
+
+export function getAllMarks() {
+  return run('marks', 'readonly', (s) => s.getAll()).then((rows) => rows ?? []);
+}
+
+/** 思い出す項目(FSRS の状態と期日)。item_id は 'claim:N' | 'question:N' | 'quiz:N'。 */
+export function getMemoryItem(itemId) {
+  return run('memory_items', 'readonly', (s) => s.get(itemId)).then((row) => row ?? null);
+}
+
+export function putMemoryItem(item) {
+  return run('memory_items', 'readwrite', (s) => s.put(item));
+}
+
+export function getAllMemoryItems() {
+  return run('memory_items', 'readonly', (s) => s.getAll()).then((rows) => rows ?? []);
+}
+
+/** 想起の記録(append-only)。本人の FSRS 最適化の材料になる。 */
+export function addRecall(recall) {
+  return run('recalls', 'readwrite', (s) => s.add(recall));
+}
+
+export function getAllRecalls() {
+  return run('recalls', 'readonly', (s) => s.getAll()).then((rows) => rows ?? []);
+}
+
 // ---- 削除 -----------------------------------------------------------------
 
 /** データ削除。設定から1タップで呼ぶ。記録層(資産)も含めて全消去する。 */
@@ -263,6 +313,9 @@ export async function wipeAll() {
     'quizzes',
     'quiz_attempts',
     'questions',
+    'marks',
+    'memory_items',
+    'recalls',
   ]) {
     await run(store, 'readwrite', (s) => s.clear());
   }

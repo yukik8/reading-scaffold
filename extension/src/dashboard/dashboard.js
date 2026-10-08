@@ -35,7 +35,11 @@ import {
   getAllQuizAttempts,
   getAllQuestions,
   getAllReadings,
+  getAllMarks,
+  getAllMemoryItems,
+  getAllRecalls,
 } from '../background/store.js';
+import { buildDue, recordRecall, buildRetention } from '../background/memory.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -255,6 +259,7 @@ const attemptMarks = (attempts) => attempts.map((c) => (c ? '○' : '×')).join(
 
 /** 余白1件の一行説明(帯の点のツールチップ)。 */
 function markLine(m) {
+  if (m.kind === 'claim') return `p.${m.page} 主張: ${m.text}`;
   if (m.kind === 'question') {
     return `p.${m.page} 問い: ${m.text}${m.selection ? `\n  「${m.selection}」` : ''}`;
   }
@@ -270,7 +275,7 @@ function bookBand(book) {
   const band = el('div', 'band');
   const placed = book.marks.filter((m) => m.page !== null && m.page >= 1 && m.page <= total);
 
-  for (const kind of ['question', 'quiz']) {
+  for (const kind of ['claim', 'question', 'quiz']) {
     const groups = new Map();
     for (const m of placed.filter((x) => x.kind === kind)) {
       groups.set(m.page, [...(groups.get(m.page) ?? []), m]);
@@ -307,13 +312,13 @@ function bookBand(book) {
   band.append(ends);
 
   const read = book.runs.map((r) => pageRange(r.from, r.to)).join('、');
-  const nq = placed.filter((m) => m.kind === 'question').length;
+  const count = (kind) => placed.filter((m) => m.kind === kind).length;
   band.setAttribute('role', 'img');
   band.setAttribute(
     'aria-label',
     `全${total}ページ。読んだ所 ${read || 'なし'}。` +
       (book.position !== null ? `しおり p.${book.position}。` : '') +
-      `問い${nq}・クイズ${placed.length - nq}`,
+      `主張${count('claim')}・問い${count('question')}・クイズ${count('quiz')}`,
   );
   return band;
 }
@@ -328,7 +333,9 @@ function marginalia(marks) {
     const body = el('div', 'mg-body');
     const text = el('span', 'mg-text', m.text);
     body.append(text);
-    if (m.kind === 'question') {
+    if (m.kind === 'claim') {
+      /* 本人の一文だけ。答えも採点も無い */
+    } else if (m.kind === 'question') {
       if (m.selection) body.append(el('span', 'mg-sel', `「${m.selection}」`));
       if (m.answer) body.append(el('span', 'mg-ans', m.answer));
     } else {
@@ -495,7 +502,86 @@ function drawQuizzes(items) {
   }
 }
 
-function drawTotals(t) {
+// ---- 思い出す(記憶の層) -----------------------------------------------------
+
+const GRADE_LABELS = [
+  [1, '思い出せなかった'],
+  [2, 'おぼろげに'],
+  [3, 'はっきり'],
+];
+
+/** 想起の結果を書いたあと、カードを事実の一行に置き換える(演出なし)。 */
+function finishRecall(li, nextDays) {
+  li.replaceChildren(el('span', 'rc-done', `また${nextDays}日ほどたったら`));
+}
+
+function recallCard(item) {
+  const li = el('li');
+  const head = [item.title ? `『${item.title}』` : null, item.book_page ? `p.${item.book_page}` : null,
+    `読んでから${item.days_since_read}日`]
+    .filter(Boolean)
+    .join(' · ');
+  li.append(el('span', 'rc-head', head));
+  li.append(el('p', 'rc-cue', item.cue));
+
+  if (item.kind === 'quiz') {
+    // クイズ: 選ぶ → 正解を示す → 正誤で自動評価(自己評価は聞かない)
+    const buttons = item.choices.map((c, i) => {
+      const b = el('button', 'rc-choice', c);
+      b.type = 'button';
+      b.addEventListener('click', async () => {
+        buttons.forEach((x) => (x.disabled = true));
+        buttons[item.answer_index].classList.add('is-answer');
+        const { next_days } = await recordRecall({ item_id: item.item_id, chosen_index: i });
+        setTimeout(() => finishRecall(li, next_days), 1_200);
+      });
+      return b;
+    });
+    li.append(...buttons);
+    return li;
+  }
+
+  // 主張・問い: 自分で思い出す(書いても書かなくてもよい)→ 見る → 自分で評価
+  const input = el('textarea', 'rc-input');
+  input.placeholder = '思い出して書く(書かなくてもよい)';
+  li.append(input);
+  const actions = el('div', 'rc-actions');
+  const show = el('button', null, '見る');
+  show.type = 'button';
+  actions.append(show);
+  li.append(actions);
+  show.addEventListener('click', () => {
+    show.remove();
+    input.readOnly = true;
+    const reveal = el('div', 'rc-reveal', item.reveal.text);
+    if (item.reveal.selection) reveal.append(el('span', 'mg-sel', `「${item.reveal.selection}」`));
+    li.insertBefore(reveal, actions);
+    for (const [grade, label] of GRADE_LABELS) {
+      const b = el('button', null, label);
+      b.type = 'button';
+      b.addEventListener('click', async () => {
+        actions.querySelectorAll('button').forEach((x) => (x.disabled = true));
+        const { next_days } = await recordRecall({
+          item_id: item.item_id,
+          grade,
+          response: input.value.trim() || null,
+        });
+        finishRecall(li, next_days);
+      });
+      actions.append(b);
+    }
+  });
+  return li;
+}
+
+function drawRecall(items) {
+  const list = $('recall');
+  list.textContent = '';
+  $('recall-sec').hidden = items.length === 0;
+  for (const item of items) list.append(recallCard(item));
+}
+
+function drawTotals(t, memory) {
   const dl = $('totals');
   dl.textContent = '';
   const rows = [
@@ -508,6 +594,11 @@ function drawTotals(t) {
     ['クイズ回答', `${t.quiz_total}`],
     ['クイズ正解', `${t.quiz_correct}`],
     ['自分からの問い', `${t.questions}`],
+    ['残した主張', `${memory.claims}`],
+    // 時間がたっても残っていること(その場の正答率の代わりの事実)
+    ...memory.retention
+      .filter((r) => r.total > 0)
+      .map((r) => [`${r.days}日後に思い出せた`, `${r.recalled} / ${r.total}`]),
   ];
   for (const [k, v] of rows) {
     const div = document.createElement('div');
@@ -525,7 +616,7 @@ function drawTotals(t) {
 // ---- データ管理 -----------------------------------------------------------
 
 $('export').addEventListener('click', async () => {
-  const [state, sessions, events, pages, readings, quizzes, attempts, questions] =
+  const [state, sessions, events, pages, readings, quizzes, attempts, questions, marks, items, recalls] =
     await Promise.all([
       getState(),
       getAllSessions(),
@@ -535,6 +626,9 @@ $('export').addEventListener('click', async () => {
       getAllQuizzes(),
       getAllQuizAttempts(),
       getAllQuestions(),
+      getAllMarks(),
+      getAllMemoryItems(),
+      getAllRecalls(),
     ]);
   const data = {
     format: 'reading-scaffold-export',
@@ -548,6 +642,9 @@ $('export').addEventListener('click', async () => {
     quizzes,
     quiz_attempts: attempts,
     questions,
+    marks,
+    memory_items: items,
+    recalls,
   };
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
   const a = document.createElement('a');
@@ -745,6 +842,7 @@ async function render() {
   $('shelf-empty').hidden = shelf.length > 0;
   $('shelf-legend').hidden = !shelf.some((b) => b.total);
   drawShelf(shelf);
+  drawRecall(await buildDue());
 
   const state = await getState();
   renderTheta(state.theta);
@@ -768,7 +866,7 @@ async function render() {
   $('quizzes-sec').hidden = quizzes.length === 0;
   drawQuizzes(quizzes);
 
-  drawTotals(await buildTotals());
+  drawTotals(await buildTotals(), await buildRetention());
   drawStabilityReport(await buildStabilityReport());
 }
 

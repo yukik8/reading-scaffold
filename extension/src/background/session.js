@@ -22,15 +22,7 @@
 // 最後の記録の時点で閉じる。
 
 import { EventType, EndReason, SessionState } from '../shared/events.js';
-import {
-  SESSION,
-  SUCCESS,
-  THETA_MAX,
-  CONTROLLER,
-  STABILITY,
-  RETENTION,
-  readDemoFlag,
-} from '../shared/config.js';
+import { SESSION, SUCCESS, THETA_MAX, CONTROLLER, STABILITY, RETENTION, readDemoFlag, PACE } from '../shared/config.js';
 import { dateKey } from '../shared/time.js';
 import {
   appendEvent,
@@ -52,7 +44,10 @@ import {
   applyHomeostat,
   isSuccess,
   stabilityScore,
+  paceSummary,
 } from './controller.js';
+import { nextStateStaircase } from './staircase.js';
+import { onQuizAnswered } from './memory.js';
 
 const CURRENT_KEY = 'currentSession';
 const store = chrome.storage.local;
@@ -175,6 +170,9 @@ async function startSessionImpl(tabId) {
     // 読書安定度 S の素材: 離れていた累計と、すぐ(60秒以内に)戻った回数
     away_total_ms: 0,
     quick_returns: 0,
+    // 読む速さの素材: ページごとの { words, ms }(content の page_read)。戻った回数は book_progress で数える
+    pace_samples: [],
+    backs: 0,
   };
   await setCurrent(session);
   await appendEvent(session.session_id, EventType.SESSION_START, {
@@ -257,8 +255,12 @@ async function finishSession(session, reason, { at, notify }) {
 
   const success =
     session.read_ms >= SUCCESS.minReadMs && session.escapes <= SUCCESS.maxEscapes;
-  // 読書安定度 S(並走計測。制御にはまだ繋がない — 二値successとの一致率を見る段階)
+  // 読む速さの要約(ページごとの語数/分)。S の steady 項と、ダッシュボードの事実表示に使う
+  const pace = paceSummary(session.pace_samples);
+  session.pace_cv = pace?.cv ?? null;
+  // 読書安定度 S。SUCCESS.judge が 'stability' なら制御器はこれを3値に切って読む(outcomeOf)
   const stability = stabilityScore(session, reason);
+  session.stability = stability;
 
   // 読了お祝いは「セッション成功、かつθ>0」のときだけ。演出もθの配下にあり、
   // θ=0では何も出さない — 補助なし読書時間の定義を汚さないため。
@@ -299,6 +301,13 @@ async function finishSession(session, reason, { at, notify }) {
     effects_shown: session.effects_shown,
     // 最長連続読書(評価レイヤー用)
     longest_streak_ms: session.longest_streak_ms ?? 0,
+    // 読む速さ(v0.22): ページ数・語数/分の中央値・ばらつき・詰まった/流したページ・読み返し
+    pages_read: pace?.pages ?? 0,
+    pace_wpm: pace?.wpm ?? null,
+    pace_cv: pace?.cv ?? null,
+    slow_pages: pace?.slow ?? 0,
+    fast_pages: pace?.fast ?? 0,
+    backs: session.backs ?? 0,
   });
 
   // 記録層: 読んだ区間(Play ブックスで位置が読めたセッションだけ)
@@ -357,9 +366,16 @@ async function finishSession(session, reason, { at, notify }) {
     try {
       const now = Date.now();
       const st = await getState();
-      let next = nextState(st, session, dateKey(now));
+      // 固定則(fixed)か閾値推定(staircase)か。切り替えは config の CONTROLLER.policy だけ
+      let next =
+        CONTROLLER.policy === 'staircase'
+          ? nextStateStaircase(st, session, dateKey(now))
+          : nextState(st, session, dateKey(now));
       let reason = null;
       if (next.theta !== st.theta) reason = isSuccess(session) ? 'success' : 'fail';
+      // 階段法は判断の種類(down/up/hold/explore_hold)を残す。探索の保留は θ が動かなくても記録する
+      // (「下げたときと据え置いたときで次が違うか」を後で比べるため)
+      if (CONTROLLER.policy === 'staircase' && next.last_decision) reason = next.last_decision;
       if (st.theta > 0 && next.theta === 0) {
         reason = 'graduate';
         next.homeostat = st.homeostat?.active
@@ -376,7 +392,7 @@ async function finishSession(session, reason, { at, notify }) {
         }
         next = after;
       }
-      if (next.theta !== st.theta) {
+      if (next.theta !== st.theta || reason === 'explore_hold') {
         await appendEvent(session.session_id, EventType.THETA_UPDATE, {
           from: st.theta,
           to: next.theta,
@@ -467,6 +483,8 @@ async function onReportImpl(event, payload, sender) {
       const pct = Math.round((page / total) * 100);
       // 記録層: 読んだ区間の素材(開始位置・最も先まで)。別キーに置く(BOOK_POS_KEY の注)
       const pos = await readBookPos(session.session_id);
+      // 読み返し: 前のページより手前へ戻った回数(読む速さの素材と並ぶ行動シグナル)
+      if (pos && page < pos.page) session.backs = (session.backs ?? 0) + 1;
       await store.set({
         [BOOK_POS_KEY]: {
           session_id: session.session_id,
@@ -498,6 +516,18 @@ async function onReportImpl(event, payload, sender) {
         /* 本文フレームが応答しなければそれでよい */
       }
       break;
+
+    case EventType.PAGE_READ: {
+      // 読む速さの標本: めくる直前まで見えていたページの語数と滞在時間
+      const words = Number(payload.words);
+      const ms = Number(payload.ms);
+      if (!(words > 0 && words < 100_000 && ms > 0 && ms < 24 * 3_600_000)) return;
+      const d = Number.isFinite(Number(payload.d)) ? Math.min(1, Math.max(0, Number(payload.d))) : null;
+      if (!Array.isArray(session.pace_samples)) session.pace_samples = [];
+      if (session.pace_samples.length < PACE.maxSamples) session.pace_samples.push({ words, ms, d });
+      await appendEvent(session.session_id, EventType.PAGE_READ, { words, ms, d });
+      break;
+    }
 
     case EventType.SCROLL:
       // Play ブックスの読了率は本の中の位置(book_progress)だけで見る。content 側の段落の比率は
@@ -539,6 +569,13 @@ async function onReportImpl(event, payload, sender) {
           chosen_index: payload.chosen_index ?? null,
           correct: payload.correct === true,
           latency_ms: payload.latency_ms ?? null,
+        });
+        // 記憶の層: 最初の回答が最初の復習(以後はダッシュボードの「思い出す」で間隔を空けて出る)
+        await onQuizAnswered({
+          quiz_id: payload.quiz_id ?? null,
+          page_id: session.page_id ?? null,
+          correct: payload.correct === true,
+          now,
         });
       } catch {
         /* 記録失敗は計測を妨げない */

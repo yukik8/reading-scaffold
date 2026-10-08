@@ -205,3 +205,38 @@ footer button {
   padding: 4px 0;
   opacity: 0.6;
 }
+
+/* 主張のカード(記憶の層)。道具の体裁: 小さく、演出なし */
+#claim {
+  display: grid;
+  gap: 8px;
+}
+
+.claim-title {
+  margin: 0;
+  font-size: 12px;
+  opacity: 0.7;
+}
+
+.claim-label {
+  font-size: 13px;
+}
+
+#claim-text {
+  font: inherit;
+  padding: 8px 10px;
+  border: 1px solid currentColor;
+  border-radius: 8px;
+  background: none;
+  color: inherit;
+}
+
+.claim-actions {
+  display: flex;
+  gap: 8px;
+}
+
+button.quiet {
+  border-color: transparent;
+  opacity: 0.6;
+}

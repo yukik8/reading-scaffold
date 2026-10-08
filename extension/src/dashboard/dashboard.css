@@ -702,6 +702,18 @@ a.row-title:hover {
   background: var(--paper);
 }
 
+/* 主張=本人の言葉。描き線の色で塗りつぶした小さなひし形(問いの輪と同じ太さ) */
+.mk-claim::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 9px;
+  height: 9px;
+  background: var(--ink);
+  transform: rotate(45deg);
+}
+
 /* クイズ=おひさま色の小さな点(クイズのカードの色)。システムが出したものなので控えめ */
 .mk-quiz::after {
   width: 8px;
@@ -848,6 +860,91 @@ details.override summary:hover {
 }
 
 .mg-quiz .mg-text {
+  color: var(--muted);
+}
+
+.mg-claim .mg-text {
+  font-weight: 800;
+}
+
+/* ---- 思い出す: 手がかり → 自分で思い出す → 見る → 自分で評価。紙のカードのまま、動きなし ---- */
+.recall > li {
+  display: grid;
+  gap: 8px;
+}
+
+.rc-head {
+  font-size: 11.5px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.rc-cue {
+  font-size: 14.5px;
+  font-weight: 800;
+  line-height: 1.6;
+}
+
+.rc-input {
+  font: inherit;
+  width: 100%;
+  min-height: 56px;
+  padding: 8px 10px;
+  border: 2px dashed var(--faint);
+  border-radius: 10px;
+  background: var(--paper);
+  color: var(--ink);
+  resize: vertical;
+}
+
+.rc-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.rc-actions button,
+.rc-choice {
+  font: inherit;
+  font-size: 13px;
+  padding: 6px 12px;
+  border: 2px solid var(--ink);
+  border-radius: 999px;
+  background: var(--paper);
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.rc-choice {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border-style: dashed;
+  border-color: var(--faint);
+  border-radius: 10px;
+}
+
+.rc-choice.is-answer {
+  border-style: solid;
+  border-color: var(--coral-deep);
+}
+
+.rc-choice:disabled {
+  cursor: default;
+}
+
+.rc-reveal {
+  padding: 8px 10px;
+  border-left: 3px solid var(--sun);
+  font-size: 13.5px;
+}
+
+.rc-reveal .mg-sel {
+  margin-top: 6px;
+}
+
+.rc-done {
+  font-size: 12px;
   color: var(--muted);
 }
 

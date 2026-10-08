@@ -1,4 +1,6 @@
 import { Msg } from '../shared/events.js';
+import { getPage } from '../background/store.js';
+import { addClaim } from '../background/memory.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -24,9 +26,49 @@ $('start').addEventListener('click', async () => {
 
 $('end').addEventListener('click', async () => {
   const res = await send(Msg.END_SESSION, { reason: 'manual' });
-  if (res?.ok) window.close();
-  else showError(res?.error ?? '終了できませんでした');
+  if (!res?.ok) {
+    showError(res?.error ?? '終了できませんでした');
+    return;
+  }
+  // 記憶の層: 成功セッションの終わりに一度だけ、主張を残すカード(本の読書だけ)
+  const ended = res.session;
+  if (ended?.success && ended.site === 'play_books' && ended.page_id) {
+    await showClaimCard(ended);
+  } else {
+    window.close();
+  }
 });
+
+let claimFor = null;
+async function showClaimCard(ended) {
+  claimFor = { page_id: ended.page_id, session_id: ended.session_id };
+  const page = await getPage(ended.page_id).catch(() => null);
+  $('claim-title').textContent = page?.title ? `『${page.title}』` : '';
+  $('controls').hidden = true;
+  $('mirror').hidden = true;
+  $('library-sec').hidden = true;
+  $('claim').hidden = false;
+  $('claim-text').focus();
+}
+
+async function saveClaim() {
+  const text = $('claim-text').value.trim();
+  if (!text || !claimFor) {
+    window.close();
+    return;
+  }
+  try {
+    await addClaim({ ...claimFor, text });
+  } catch {
+    /* 残せなくても読書は終わっている。静かに閉じる */
+  }
+  window.close();
+}
+$('claim-save').addEventListener('click', saveClaim);
+$('claim-text').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.isComposing) saveClaim();
+});
+$('claim-skip').addEventListener('click', () => window.close());
 
 $('open-dashboard').addEventListener('click', () => {
   chrome.tabs.create({ url: chrome.runtime.getURL('src/dashboard/dashboard.html') });

@@ -9,6 +9,7 @@ import {
   getAllQuizzes,
   getAllReadings,
   getAllSessions,
+  getAllMarks,
 } from './store.js';
 
 const BOOK_READER = 'https://play.google.com/books/reader';
@@ -56,16 +57,17 @@ function coverageRuns(readings, total) {
  *   position: number|null, total: number|null, remaining_min: number|null,
  *   runs: Array<{ from, to, count }>,
  *   readings: Array<{ started_at, from, to, read_min }>,
- *   marks: Array<{ kind: 'question'|'quiz', page: number|null, t, text, selection?, answer?, attempts? }>,
+ *   marks: Array<{ kind: 'claim'|'question'|'quiz', page: number|null, t, text, selection?, answer?, attempts? }>,
  * }>>}
  */
 export async function buildBookshelf() {
-  const [pages, readings, quizzes, attempts, questions] = await Promise.all([
+  const [pages, readings, quizzes, attempts, questions, allMarks] = await Promise.all([
     getAllPages(),
     getAllReadings(),
     getAllQuizzes(),
     getAllQuizAttempts(),
     getAllQuestions(),
+    getAllMarks(),
   ]);
   const attemptsByQuiz = new Map();
   for (const a of attempts) {
@@ -99,6 +101,10 @@ export async function buildBookshelf() {
         : null;
 
     const marks = [
+      // 本人が残した主張(本人起点の痕跡。問いと同じく上に置く)
+      ...allMarks
+        .filter((m) => m.page_id === p.page_id && m.kind === 'claim')
+        .map((m) => ({ kind: 'claim', page: m.book_page ?? null, t: m.created_at, text: m.text })),
       ...questions
         .filter((q) => q.page_id === p.page_id)
         .map((q) => ({

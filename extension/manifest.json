@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "reading-scaffold (dev)",
-  "version": "0.21.1",
+  "version": "0.23.0",
   "description": "Google Play ブックスで読む時間を、補助が自動で減っていく演出で支える読書拡張。計測は「読む」を押した間だけ。",
   "permissions": ["scripting", "storage", "alarms"],
   "host_permissions": [

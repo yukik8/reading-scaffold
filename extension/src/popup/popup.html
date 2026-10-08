@@ -20,6 +20,18 @@
         <p id="error" hidden></p>
       </div>
 
+      <!-- 記憶の層(docs/design.md §8): 成功セッションの終わりに一度だけ、道具の小さなカード。
+           本人が書いた一文が資産になる。無視すれば黙って消える(要求しない)。演出はつけない -->
+      <div id="claim" hidden>
+        <p id="claim-title" class="claim-title"></p>
+        <label for="claim-text" class="claim-label">いちばん大事だった主張を、ひとつ</label>
+        <input id="claim-text" type="text" maxlength="120" autocomplete="off" />
+        <div class="claim-actions">
+          <button id="claim-save" type="button">残す</button>
+          <button id="claim-skip" type="button" class="quiet">閉じる</button>
+        </div>
+      </div>
+
       <!-- Mirror: 主表示は補助なし読書時間の週次推移。
            連続日数・他人との比較・目標未達の警告は出さない(責めない原則)。 -->
       <section id="mirror" aria-label="Mirror">

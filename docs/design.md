@@ -51,52 +51,9 @@
 
 ## 2. 構成
 
-```mermaid
-flowchart TB
-  user(["利用者"])
+![全体の組み立て](overview.png)
 
-  subgraph ui["拡張ページ"]
-    popup["popup<br/>読む / 終える・今週の様子"]
-    onboarding["onboarding<br/>診断 → θ の初期値・目標・うんちくの同意"]
-    dashboard["dashboard<br/>本棚・帯・推移・データ管理"]
-  end
-
-  subgraph tab["Play ブックスのタブ(セッション中だけ注入)"]
-    pager["playbooks-pager.js<br/>全フレーム: ページ表示「N / M」を読む"]
-    loader["loader.js<br/>版キーのガード・本文が出るまで待つ"]
-    main["main.js(本文フレーム)<br/>本文検出・計測・θ駆動の演出計画"]
-    fx["margin.js 余白の花 / stage.js くま・クイズ・フィナーレ<br/>overlay.js 問いのボタン・通知 / paint.js 水彩"]
-  end
-
-  subgraph sw["Service Worker(MV3)"]
-    router["service-worker.js<br/>ルータ・常設リスナー・送信元の確認"]
-    session["session.js<br/>状態機械・離脱・ページ送り・1本の列"]
-    controller["controller.js<br/>θ の漸減・ホメオスタット・S"]
-    store[("store.js<br/>IndexedDB v4")]
-    agg["mirror / kpi / library<br/>集計"]
-    ai["ai.js<br/>Gemini Nano"]
-    srv["server.js<br/>うんちくの単語だけ"]
-  end
-
-  nano["Gemini Nano<br/>端末内"]
-  server["Vercel: server/main.py → Anthropic<br/>同意したときだけ・単語の候補だけ"]
-
-  user --> popup & onboarding & dashboard
-  popup -- "START / END_SESSION" --> router
-  router -- "注入" --> loader --> main --> fx
-  loader --> pager
-  pager -- "book_progress / book_end" --> router
-  main -- "REPORT / QUIZ_* / ASK / TRIVIA" --> router
-  router --> session --> controller --> store
-  router --> ai --> nano
-  router --> srv --> server
-  store --> agg --> dashboard
-
-  style nano fill:#e1f5ee,stroke:#0f6e56,color:#04342c
-  style server fill:#faece7,stroke:#993c1d,color:#4a1b0c,stroke-dasharray:5 5
-```
-
-緑=端末内で完結。橙の点線が端末の外へ出る唯一の経路で、本人が同意したときに、端末で選んだ単語の候補(最大8語)だけが通る(§9)。
+紫の太線 ①〜⑤ が中核の流れ(読む → 開始 → 注入 → 計測 → 終了時に θ を更新)。橙の線が端末の外へ出る唯一の経路で、本人が同意したときに、端末で選んだ単語の候補(最大8語)だけが通る(§9)。黄色の箱は動くが残りがあるもの。図の元は [overview.svg](overview.svg)(素の SVG。直したら PNG を書き出し直す)。
 
 - **Play ブックスのフレーム:** 最上位は `play.google.com/books/reader`、本文とページ表示は `books.googleusercontent.com` のフレームの中。ローダーは全フレームに入り、本体(main.js)は本文のあるフレームでだけ動く
 - **ビルド工程なし。** ES モジュールをそのまま読む。ストア版かどうかは manifest の `update_url` の有無で見分ける(`IS_STORE_BUILD`)
@@ -152,6 +109,8 @@ ACTIVE/ESCAPED ──[終える / タブを閉じる / 本の外へ移る / 無�
 | 最長連続 longest_streak_ms | 鼓動が40秒以内に続き、離脱で切れない区間の最長 |
 | 読了率 completion_pct | 本の中の位置(ページ表示 page/total)。段落の比率は使わない(読み込まれた分の中の位置なので途中でも100%になる) |
 | 読了 | 1ページずつ進んで最後のページに着いたとき(pager の `book_end`)。スライダーや目次で飛んだ・最後のページで開き直した、は読了にしない |
+| 読む速さ(v0.22) | ページを送るたびに、直前まで見えていた段落の語数と滞在時間(`page_read`)。離脱を挟んだページ・3秒未満・10分超・20語未満は標本にしない。セッションの終わりに 語数/分の中央値・変動係数・詰まった(中央値の1/2以下)/流した(2.5倍以上)ページ数を `sessions` に残す |
+| 読み返し backs | ページ表示が前のページより手前へ動いた回数 |
 | 本文 | `reader-rendered-page .main_text > div` の空でない段落(ルビの振り仮名は除く)。3段落・200語未満なら measure-only(演出なし・計測のみ) |
 
 - 表紙や挿絵のページで始めたときは、ローダーが本文のページが出るまで待ってから本体を入れる
@@ -164,22 +123,25 @@ ACTIVE/ESCAPED ──[終える / タブを閉じる / 本の外へ移る / 無�
 
 ### θ(現物)
 
-- 単一レコード `state`: `{ theta, success_streak, fail_streak, day, day_start_theta, diag_answers, goal, onboarded_at, homeostat? }`
+- 単一レコード `state`: `{ theta, success_streak, fail_streak, day, day_start_theta, diag_answers, goal, onboarded_at, homeostat?, stair?, last_decision? }`(`stair` は階段法の事後分布・§5)
 - **実効θ** = θ × (1 ± 0.1 の乱数)。日々±10%揺れる中を成功あたり10%下るので、下降がノイズに埋もれる(迷彩)
 - **診断は事前分布を置くだけ:** 4問(各0〜2点)の合計 → `[2, 3, 4, 5, 5.5, 6, 7, 7.5, 8]`。セッションの実績が1つでもあれば、診断のやり直しは θ を触らない
 
-### S(読書安定度)— 並走計測中(制御には未接続)
+### S(読書安定度)— 並走計測中(`SUCCESS.judge` で制御に接続できる)
 
-二値の success(5分以上・離脱1回以下)は「20分読んで1回逸れた」と「5分ぎりぎり」を区別できない。S ∈ [0,1] に格上げする予定で、v0.14 から `sessions.stability` に並走で記録している。ルールベース(ML にしない)。
+二値の success(5分以上・離脱1回以下)は「20分読んで1回逸れた」と「5分ぎりぎり」を区別できない。Play ブックスでは5分の基準が緩く、θ と無関係に成功が並ぶ = 制御器に情報が届かない(replay の `flat` 読者)。S ∈ [0,1] を v0.14 から `sessions.stability` に並走で記録している。ルールベース(ML にしない)。
 
 ```
-S = clamp( 0.40·dur + 0.25·escape + 0.15·return + 0.10·completion + 0.10·ending, 0, 1 )
-dur        = min(read_min / 20, 1)
-escape     = max(0, 1 − escapes/3) × max(0, 1 − away_total_ms/3分)
-return     = 離脱のうち60秒以内に戻った割合(離脱なしは1)
-completion = completion_pct / 100
-ending     = manual:1 / close:0.7 / idle:0.3
+S = clamp( 0.45·dur + 0.25·escape + 0.15·return + 0.10·steady + 0.05·ending, 0, 1 )
+dur     = min(read_min / 20, 1)
+escape  = max(0, 1 − escapes/3) × max(0, 1 − away_total_ms/3分)
+return  = 離脱のうち60秒以内に戻った割合(離脱なしは1)
+steady  = max(0, 1 − 速さの変動係数)(標本が無ければ 0.5)
+ending  = manual:1 / close:0.8 / idle:0.6
 ```
+
+- v0.22 で `completion`(本の中の位置。その回の読み方と無関係に後半ほど高くなる)を `steady` に替え、`ending` の重みを下げた(終了ボタンを押したかどうかで成否が割れないように)
+- **制御への接続:** `SUCCESS.judge = 'stability'` にすると、制御器は `outcomeOf` で S を3値に切って読む(S ≥ 0.7 成功・S ≤ 0.3 失敗・間は据え置き=学ばない)。既定は `'binary'`(v0.21 と同じ)。切り替えは並走データの一致率(`library.stabilityReport`)と replay を見てから
 
 **S に入れないもの:** ヒント・演出の回数、クイズ正誤、問いの数、目標達成、連続日数、その他エンゲージメント指標。理解を制御に入れると「簡単な問題を出せば θ が下がる」自己目的化の回路ができる。理解は評価のガードレールにだけ使う(§10)。
 
@@ -207,10 +169,27 @@ ending     = manual:1 / close:0.7 / idle:0.3
 - 再展開中も**通常の漸減は続く**(目標は常に0)。4週平均が基準の **80%** まで戻るか、漸減で0に着いたら再卒業
 - 文献(research/fading.md): 乗算的な減衰は減薬の標準形式と同型。パンの減塩 RCT(週5%・累積25%で気づかれない)が「気づかれない漸減」の実証例
 
-### これからの変更(計画)
+### 閾値推定(staircase.js・v0.22・`CONTROLLER.policy = 'staircase'` で有効)
 
-- 二値 success → S。`S ≥ 0.7` で成功、`S ≤ 0.3` で失敗、間は据え置き。並走データがたまってから
-- fading.md の推奨: ①失敗時は ×1.3 でなく**最後に安定成功していた θ へ戻す** ②卒業直前(θ<0.6)は刻みを細かく(0.3→0 の一括変化は気づかれうる) ③再展開は1.5の一括でなく低θ(0.15)からの漸増
+固定則の弱点は、`tools/replay` の模擬読者で数字になる: 閾値の高い人(`heavy`)を**成功率4〜5割の θ に留め続ける**(×0.9 と ×1.3 の釣り合う点が p≈0.5)。一方で成功基準が緩い人(`flat`)には33回のタイマーにすぎない。
+
+階段法は、その人の「θ がこれだけあれば読める」閾値 τ をセッションの成否からベイズ推定する(心理物理学の QUEST と同じ考え方。n=1・数十回で収束する)。
+
+```
+P(成功 | θ, τ) = γ + (1 − γ − λ) · σ((log θ − τ) / w)      γ=0.15 λ=0.1 w=0.5
+事後分布は log θ のグリッド(0.05 〜 8×e^1.5・64点)上の重み。初期は一様(診断の θ は最初の量であって閾値の見込みではない)
+目標点 θ* = exp(τ̂ + 余白)   余白 = w·logit((0.75 − γ)/(1 − γ − λ)) ≈ 閾値 × 2
+
+成功 → θ ← θ×0.9(固定則と同じ。閾値から遠いあいだ、成功は「閾値はもっと下」としか言わない)
+       ただし事後分布が狭く(sd ≤ 0.5)、θ×0.9 < θ* なら据え置き(閾値の余白の中では下げない)
+失敗 → θ* > θ×1.05 なら θ ← θ*(= 最後に読めていた θ の記憶へ戻る)。閾値から遠い失敗は生活のノイズとして動かない
+毎回、事後分布を sd 0.12 のガウス核でぼかす(忘却。据え置きが続いても失敗の記憶は薄れ、習慣で閾値が下がれば再び下り始める)
+1日 ±15%・θ<0.3 で卒業 は固定則と同じ
+```
+
+- fading.md の推奨 ①(失敗時は最後に安定していた θ へ)②(卒業直前は刻みを細かく)は、この形に含まれる。③(再展開は低く始める)はホメオスタット側で未対応
+- `STAIRCASE.exploreHoldP`(既定 0): 下げる場面でもこの確率で据え置き、「下げたせいで読めなくなったか」を後から比べられるようにする(micro-randomization)。卒業が遅れるので開発者のプロフィールでだけ使う
+- 模擬読者での比較(replay、300人・16週): `heavy` の成功率 49% → 69%、`light`・`flat` は固定則と同じ、`typical` は成功率 73% → 78% と引き換えに12週以内の卒業が 54% → 24%(閾値を尊重するぶん遅い)。本物の記録では `replay --export` で θ の軌跡を比べる
 - 日次±15% は文献の根拠がない。工学的な裁量と明記して残す
 
 ---
@@ -249,6 +228,8 @@ ending     = manual:1 / close:0.7 / idle:0.3
 | パラメータ | 導出 |
 |---|---|
 | ヒントの枠 | θ × 本文語数 / 1000。後から読み込まれたページの段落にも、端数を持ち越しながら割り当てる。Play ブックスでは枠どうしを30秒以上空ける |
+| 枠の置き場所(v0.22) | 段落の難しさ(`content/difficulty.js`: 文の長さ・漢字の割合・漢字の連なり。端末内の目安、AI なし)で重み付けして選ぶ。重み = (0.1+難しさ)^k、k = 3×(1−θ/8)。θ=8 で一様、θ が下がるほど難しい段落に寄る — **易しい所から先に消える**(足場の随伴的な漸減)。枠の数は変えない・どこに出るかは乱数のまま |
+| 突然クイズの焦点(v0.22) | 読み終えたページで最も難しい段落を Nano に「特にここ」と渡す。頻度は θ 配下のまま、随伴性の重心を「読む→光」から「わかる→光」へ(research/reward.md 3-3) |
 | レア度 | 計画時に**事前ロール**: epic 2.5% / rare 12% / normal。頻度は θ、大きさは乱数 |
 | 先触れ | レア以上が4段落先までに待つと、地の星が金(激レアは虹)に変わる。約1分で発火を保証 |
 | 天井 | θ>0 で演出ゼロの実読書が `clamp(12/θ, 3, 15)` 分続いたら normal を1回。残り時間は示さない |
@@ -299,7 +280,7 @@ ending     = manual:1 / close:0.7 / idle:0.3
 |---|---|---|---|---|
 | 計測層 | `events`(append-only) `sessions`(集計) | 鼓動・離脱・ページ送り・ヒント/演出/クイズ/問いの発生 | 持たない | ローカルのみ |
 | 制御層 | `state`(単一) | θ・streak・診断・目標・ホメオスタット | 持たない | ローカルのみ |
-| 記録層 | `pages` `readings` `quizzes` `quiz_attempts` `questions`(計画)`passages` `marks` `recalls` | 読書メモリ=本人の資産 | **持つ** | **ローカルのみ** |
+| 記録層 | `pages` `readings` `quizzes` `quiz_attempts` `questions` `marks` `memory_items` `recalls` | 読書メモリ=本人の資産(記憶の層を含む) | **持つ** | **ローカルのみ** |
 
 - 増やすのは記録層だけ。計測層は意図的に貧しいままにする。本の中の位置も記録層に置く
 - **単位は「本」と「箇所」。** 本=`pages` の1行(Play ブックスの URL の `id=` で1冊。ストア名は IndexedDB が改名できないので据え置き)。読んだ区間=`readings` の1行(1セッション=1区間)。箇所=本のページ番号(ページ表示「N / M」。見開き「4-5 / 17」は後ろのページ)
@@ -310,7 +291,8 @@ ending     = manual:1 / close:0.7 / idle:0.3
 ```
 sessions  { session_id, date, started_at, domain, page_id, theta, theta_base, read_ms, escapes,
             completion_pct, success, stability, reason, away_total_ms, quick_returns,
-            hints_shown, effects_shown, longest_streak_ms }
+            hints_shown, effects_shown, longest_streak_ms,
+            pages_read, pace_wpm, pace_cv, slow_pages, fast_pages, backs }   # v0.22 読む速さ
 pages     { page_id(正規化URLの SHA-256), url, title, domain, lang, word_count,
             first_read_at, last_read_at, read_count, total_read_ms, best_completion_pct,
             book_position { page, total }, finished_at }
@@ -322,7 +304,8 @@ quiz_attempts { attempt_id, quiz_id, page_id, session_id, answered_at, chosen_in
 questions { question_id, page_id, session_id, book_page, selection, question, answer, created_at }
 events    { id, session_id, t, type, payload }
           type: session_start / dwell_tick / scroll / tab_escape / tab_return / page_turn / hint_shown /
-                hint_clicked / effect_shown / quiz_answered / question_asked / session_end / theta_update
+                hint_clicked / effect_shown / quiz_answered / question_asked / session_end / theta_update /
+                page_turn / page_read { words, ms, d }
 ```
 
 - `title` はタブのタイトルから「 - Google Play Books」を除いたもの
@@ -332,8 +315,8 @@ events    { id, session_id, t, type, payload }
 
 ### 保持・消去・持ち出し
 
-- 細かい計測(`dwell_tick`・`scroll`)は **180日** で消す。それ以外(セッションの集計・本・区間・クイズ・問い)は本人が消すまで残す
-- 全消去は1タップで全ストアと storage を空にし、インストール ID も消す(記録層=資産も含む)
+- 細かい計測(`dwell_tick`・`scroll`・`page_read`)は **180日** で消す。それ以外(セッションの集計・本・区間・クイズ・問い)は本人が消すまで残す
+- 全消去は1タップで全ストアと storage を空にし、インストール ID も消す(記録層=資産・記憶の層も含む)
 - エクスポートは JSON(資産なので持ち出せる)
 
 ### ダッシュボードで出すもの
@@ -345,21 +328,30 @@ events    { id, session_id, t, type, payload }
 3. **θ の節** — 帯(自立度 1−θ/8 を白→黄→緑→茶→黒の色で。黒が卒業)、自立の推移、週次目標の達成率、週次推移
 4. **累計とデータ** — 読書時間・補助なし時間・読み終えた本・クイズ・問い。エクスポート・全消去・うんちくの同意・内蔵AIの確認
 
-### 記憶の層(計画)
+### 記憶の層(memory.js・shared/fsrs.js・v0.23)
 
-読んだものが自分の知識として残る、の実体。原則は **retrieval practice(自分で思い出す)> LLM の要約**。LLM が要約して溜めたものは数ヶ月でゴミになる。本人が想起したものだけを資産にする。
+読んだものが自分の知識として残る、の実体。原則は **retrieval practice(自分で思い出す)> LLM の要約**。LLM が要約して溜めたものは数ヶ月でゴミになる。本人が残した・問うた・答えたものだけを「思い出す項目」にする。記録カテゴリなので、演出なし・褒めない・催促しない。
 
 ```
-passages  箇所。痕跡をすべてここにぶら下げる  { passage_id, page_id, book_page, excerpt, hash }
-marks     本人が起点の痕跡  { mark_id, passage_id, page_id, session_id, kind: question|selection|claim, text, answer?, created_at }
-recalls   思い出した記録  { recall_id, passage_id|mark_id, kind: quiz|recall, prompt, result, answered_at, days_since_read }
+marks         本人が残した主張  { mark_id, page_id, session_id, kind: 'claim', book_page, text, created_at }
+memory_items  思い出す項目      { item_id: 'claim:N'|'question:N'|'quiz:N', kind, target_id, page_id, created_at,
+                                  D, S, reps, lapses, last_review, due }      # FSRS の状態
+recalls       想起の記録(追記のみ) { recall_id, item_id, kind, page_id, grade, correct, chosen_index, response,
+                                  answered_at, elapsed_days, retrievability, days_since_read, before{D,S}, after{D,S} }
 ```
 
-- 成功セッションの終わりに、道具の小さなカード「この本で一番大事だった主張を、ひとつ」を出す。本人が書いた一文が `marks` の `claim`。無視すれば黙って消える(要求しない)。演出はつけない
-- 数日後に別の手がかりで再想起させる(spaced retrieval)。結果は `recalls`
-- LLM の役割は想起の問いを作ることと、答えを本文に照らすことだけ。要約・正解の提示・採点の言語化はしない
-- 既存の `questions` は `marks(question)`、`quiz_attempts` は `recalls(quiz)` に寄せる。移すのは表示を作るとき
-- ダッシュボードに「時間がたっても残っていること」(7日後・30日後の想起)を、その場の正答率の代わりに出す
+| 項目 | いつできる | 手がかり | 見せるもの | 評価 |
+|---|---|---|---|---|
+| 主張 claim | 成功セッションの終わりに popup で一文を書いたとき(書かなければ何も残らない) | 書名 +「いちばん大事と残したことは?」 | 本人の一文 | 本人: 思い出せなかった / おぼろげに / はっきり |
+| 問い question | 本人が読書中に問うたとき(`questions`。問うた時点が最初の復習) | 本人の問い | 選んでいた箇所と、そのときの答え | 同上 |
+| クイズ quiz | 突然クイズに答えたとき(最初の回答が最初の復習) | 問題と3択 | 正解 | 正誤で自動(自己評価は聞かない) |
+
+- **間隔は FSRS-5**(Anki が採用する、個人の忘却曲線を復習の記録から当てはめるスケジューラ)。難しさ D と安定度 S(記憶が 90% 残る日数)を項目ごとに持ち、思い出せる確率が 0.9 まで落ちる日に出す。はっきり思い出せると 3日 → 11日 → 35日 → 101日 と伸び、思い出せないと S が大きく縮む。重みは既定値(本人の記録での最適化は `recalls` が数百件たまってから)
+- **場所はダッシュボードの「思い出す」節だけ。** 期日が来たものを古い順に最大5件。自分で思い出し(書いても書かなくてもよい)→「見る」→ 自分で評価。評価のあとは「また N日ほどたったら」の一行に置き換わる(事実。演出なし)。無視すれば次に開いたときまで出ない
+- **LLM は使っていない。** 手がかりは本人の言葉(主張・問い)か、出題済みのクイズ。Nano で「別の手がかり」を作る案は、主張の内容を漏らさない保証が要るので見送り
+- **主張は余白に出る**(帯のひし形・余白の一覧の先頭)。本人が起点の痕跡を、システムが作ったもの(クイズ)より上に置く
+- ダッシュボードの累計に「残した主張」と「7日後・30日後に思い出せた a / b」(読んでからその日数以上たった想起のうち、おぼろげ以上で思い出せた割合)を出す。その場の正答率より、これが「残っていること」の事実
+- `passages`(箇所)は作っていない。主張は本、問いは選んでいた箇所をすでに持つので、箇所の表が要るのはハイライト(Open Question 5)を取るときになってから
 
 ---
 
@@ -421,7 +413,7 @@ recalls   思い出した記録  { recall_id, passage_id|mark_id, kind: quiz|rec
 
 1. **ページを改変しない。** 追加するのは Shadow DOM の中の層だけ。ページの要素に属性も付けない。演出は本文の外に描く
 2. **計測はセッション中のみ。** 常設リスナー+全ハンドラの先頭でセッションを確かめる
-3. **θ の目標値は常に0。** 制御器の入力は行動シグナル(read_ms・escapes・away・return・completion・終了理由)だけ。クイズ正誤・問いの数・演出数・目標・連続日数などは入れない
+3. **θ の目標値は常に0。** 制御器の入力は行動シグナル(read_ms・escapes・away・return・読む速さ・終了理由)だけ。クイズ正誤・問いの数・演出数・目標・連続日数などは入れない
 4. **予告は必ず当たる。** ニアミスを作らない。先触れ・二度瞬きは必ず本演出で回収する
 5. **演出は θ 配下、記録に可変報酬なし、道具に演出なし。** タペリングできない刺激装置を作らない
 6. **言葉で褒めない・教えない。** 例外は §6 の3つ(呼び出し式の回答・ピークの言葉・くまのうんちく)だけ
@@ -446,13 +438,16 @@ recalls   思い出した記録  { recall_id, passage_id|mark_id, kind: quiz|rec
 | 10/07 | v0.20 | Play ブックス対応・絵本の演出(くま・突然クイズ・うんちく・読了フィナーレ・余白)・読んだ区間(DB v4)・本棚 |
 | 10/07 | v0.21 | 本文を端末の外に出さない(方式B)・Play ブックス専用・うんちくサーバを Vercel へ |
 | 10/08 | v0.21.1 | レビューの残り: セッションをブラウザ終了で失わない・読了判定・ホメオスタットの罠・ページ側の後片付け |
+| 10/08 | v0.22 | 再生ハーネス(`tools/replay`)・閾値推定の制御器(staircase・既定OFF)・読む速さのセンサー・S の steady 項と judge・難しさで枠を配分 |
+| 10/08 | v0.23 | 記憶の層(DB v5): 主張のカード・ダッシュボードの「思い出す」・FSRS-5 の間隔・想起の記録 |
 
 ### これから
 
-1. **Chrome ウェブストアに出す** — 製品名・アイコン・掲載文・プライバシーポリシーの公開([release.md](release.md))
-2. **S を制御に接続** + fading.md の3修正(§5)
-3. **記憶の層**(`passages` `marks` `recalls`・DB v5)+終わりの想起カード(§8)
-4. 他人の環境で動くか: Play ブックスの画面の変化への追従、Nano が使える端末の割合
+1. **Chrome ウェブストアに出す** — 製品名・アイコン・掲載文・プライバシーポリシーの公開([release.md](release.md))。固定則・binary のまま出し、これをベースラインにする
+2. **自分の記録で検証してから切り替える** — ダッシュボードの JSON を `replay --export` に通す(fixed が記録を再現するか・staircase の軌跡)。速さと S の並走データがたまったら `SUCCESS.judge = 'stability'`、次に `CONTROLLER.policy = 'staircase'`
+3. 記憶の層の続き: 想起の記録が数百件たまったら FSRS の重みを本人の記録で最適化。ハイライト(選んだ箇所の記録)を取るなら `passages` を足す
+4. 難しさの目安が弱ければ Nano で「概念の密度」を採点(毎ページ生成のコストと引き換え)。ダッシュボードに速さ・閾値の推定を事実として出す(開発用)
+5. 他人の環境で動くか: Play ブックスの画面の変化への追従、Nano が使える端末の割合
 
 ### Open Questions
 
