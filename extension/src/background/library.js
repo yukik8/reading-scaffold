@@ -20,6 +20,14 @@ export function isBookPage(page) {
   return (page.url ?? '').startsWith(BOOK_READER);
 }
 
+/**
+ * 読了か。読んだ区間(readings)の記録がある本は finished_at だけで見る(最後のページへ飛んだだけでは
+ * 読了にしない)。区間の記録が始まる前(v0.19 より前)に読んだ本だけ、読了率で見る。
+ */
+function isFinished(page, hasReadings) {
+  return Boolean(page.finished_at) || (!hasReadings && (page.best_completion_pct ?? 0) >= 100);
+}
+
 /** ページごとの読んだ回数を、同じ回数が続く区間にまとめる(帯の塗り)。 */
 function coverageRuns(readings, total) {
   const counts = new Array(total).fill(0);
@@ -73,8 +81,7 @@ export async function buildBookshelf() {
     const latest = rs[rs.length - 1];
     const total = p.book_position?.total ?? latest?.range.total ?? null;
     const position = p.book_position?.page ?? latest?.range.to ?? null;
-    // 読了: v0.19 以降は finished_at。それ以前の本は読了率(Play ブックスでは本の中の到達点)で見る
-    const finished = Boolean(p.finished_at) || (p.best_completion_pct ?? 0) >= 100;
+    const finished = isFinished(p, rs.length > 0);
 
     // その本での自分のペース(前へ進んだページあたりの読書時間)
     let pacePages = 0;
@@ -265,12 +272,14 @@ export async function buildStabilityReport() {
 
 /** 累計(ダッシュボード用)。 */
 export async function buildTotals() {
-  const [sessions, attempts, pages, questions] = await Promise.all([
+  const [sessions, attempts, pages, questions, readings] = await Promise.all([
     getAllSessions(),
     getAllQuizAttempts(),
     getAllPages(),
     getAllQuestions(),
+    getAllReadings(),
   ]);
+  const withReadings = new Set(readings.map((r) => r.page_id));
   let readMs = 0;
   let unassistedMs = 0;
   for (const s of sessions) {
@@ -281,8 +290,7 @@ export async function buildTotals() {
   return {
     sessions: sessions.length,
     books: books.length,
-    books_finished: books.filter((p) => p.finished_at || (p.best_completion_pct ?? 0) >= 100)
-      .length,
+    books_finished: books.filter((p) => isFinished(p, withReadings.has(p.page_id))).length,
     articles: pages.length - books.length,
     read_min: Math.round(readMs / 60_000),
     unassisted_min: Math.round(unassistedMs / 60_000),

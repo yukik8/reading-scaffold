@@ -16,8 +16,10 @@
 // このファイルを通り、最初にセッションの存在を確認してから動く。セッションが無ければ
 // 何も読まず何も書かずに戻る。観測コードパスがセッション中しか走らないことは変わらない。
 //
-// セッションの現在値はchrome.storage.sessionに置く(SW再起動を跨いで生き、
-// ブラウザ終了で消える — セッションという意味に合う)。
+// セッションの現在値はchrome.storage.localに置く(SW再起動もブラウザの終了も跨いで残る)。
+// storage.session だとブラウザを閉じた瞬間に消え、そのセッションの読書時間・読んだ区間・θの更新が
+// 失われる。取り残されたセッションは、ブラウザの起動時と拡張の更新時に recoverSession が
+// 最後の記録の時点で閉じる。
 
 import { EventType, EndReason, SessionState } from '../shared/events.js';
 import {
@@ -26,6 +28,7 @@ import {
   THETA_MAX,
   CONTROLLER,
   STABILITY,
+  RETENTION,
   readDemoFlag,
 } from '../shared/config.js';
 import { dateKey } from '../shared/time.js';
@@ -40,6 +43,7 @@ import {
   getAllSessions,
   getEventsBySession,
   putReading,
+  pruneEvents,
   sha256Hex,
 } from './store.js';
 import {
@@ -51,6 +55,7 @@ import {
 } from './controller.js';
 
 const CURRENT_KEY = 'currentSession';
+const store = chrome.storage.local;
 // 本の中の位置(Play ブックス)。currentSession とは別キーに置く — currentSession は複数の
 // ハンドラが読んで書き戻すので、ページ送りの直後に古い写しで上書きされうる。位置は
 // book_progress だけが書くので、別キーなら取りこぼさない。
@@ -58,18 +63,18 @@ const BOOK_POS_KEY = 'bookPosition';
 export const WATCHDOG_ALARM = 'rs-watchdog';
 
 export async function getCurrent() {
-  const got = await chrome.storage.session.get(CURRENT_KEY);
+  const got = await store.get(CURRENT_KEY);
   return got[CURRENT_KEY] ?? null;
 }
 
 function setCurrent(session) {
-  if (session === null) return chrome.storage.session.remove(CURRENT_KEY);
-  return chrome.storage.session.set({ [CURRENT_KEY]: session });
+  if (session === null) return store.remove(CURRENT_KEY);
+  return store.set({ [CURRENT_KEY]: session });
 }
 
 /** このセッションの本の中の位置 { from, page, furthest, total }。無ければ null。 */
 async function readBookPos(sessionId) {
-  const got = await chrome.storage.session.get(BOOK_POS_KEY);
+  const got = await store.get(BOOK_POS_KEY);
   const pos = got[BOOK_POS_KEY];
   return pos && pos.session_id === sessionId ? pos : null;
 }
@@ -144,7 +149,7 @@ async function startSessionImpl(tabId) {
     session_id: crypto.randomUUID(),
     tab_id: tabId,
     window_id: tab.windowId,
-    // タブ内遷移の判定にだけ使う。storage.session限りで、IndexedDBには書かない。
+    // タブ内遷移の判定にだけ使う。currentSession 限りで、IndexedDBには書かない。
     page_url: pageKey(tab.url),
     page_id: pageId,
     // 本文は端末の外へ出さない(Google Play の規約。生成は Nano のみ・うんちくは単語だけ)
@@ -220,20 +225,25 @@ async function startSessionImpl(tabId) {
   return session;
 }
 
-async function endSessionImpl(reason) {
+/**
+ * @param {string} reason - 終了理由
+ * @param {{ at?: number, notify?: boolean }} [opts] - at: 終わった時刻(取り残されたセッションは
+ *   最後の記録の時刻)。notify: ページの content script に片付けとお祝いを頼むか
+ */
+async function endSessionImpl(reason, { at = Date.now(), notify = true } = {}) {
   const session = await getCurrent();
   if (!session || session.state === SessionState.ENDED) return null;
 
   // 離脱したまま終わった場合、その離脱時間も「離れていた累計」に足す(すぐ戻ったには数えない)
   if (session.state === SessionState.ESCAPED && session.escaped_at) {
-    session.away_total_ms = (session.away_total_ms ?? 0) + (Date.now() - session.escaped_at);
+    session.away_total_ms = (session.away_total_ms ?? 0) + Math.max(0, at - session.escaped_at);
   }
   // 最初に「終了中」を保存する: 終了が二重に走らない(SW の再起動を跨いでも)・
   // 終了処理の途中に届いた報告でセッションが生き返らない
   session.state = SessionState.ENDED;
   await setCurrent(session);
   try {
-    return await finishSession(session, reason);
+    return await finishSession(session, reason, { at, notify });
   } finally {
     // 記録の書き込みが途中で失敗しても、セッションは必ず閉じる(次の開始・全消去を塞がない)
     await setCurrent(null);
@@ -241,7 +251,7 @@ async function endSessionImpl(reason) {
 }
 
 /** 終了の本体: 記録・制御器・content script への片付けの依頼。 */
-async function finishSession(session, reason) {
+async function finishSession(session, reason, { at, notify }) {
   await chrome.alarms.clear(WATCHDOG_ALARM);
   await chrome.action.setBadgeText({ text: '' });
 
@@ -253,8 +263,9 @@ async function finishSession(session, reason) {
   // 読了お祝いは「セッション成功、かつθ>0」のときだけ。演出もθの配下にあり、
   // θ=0では何も出さない — 補助なし読書時間の定義を汚さないため。
   // デモ中だけは成功条件を待たず必ず出す(見せるためのモード)。
+  // ページに届けられない終わり方(取り残されたセッション)では出さない — 出していない演出を数えない
   const demoEnabled = await readDemoFlag();
-  const celebrate = (success || demoEnabled) && session.theta > 0;
+  const celebrate = notify && (success || demoEnabled) && session.theta > 0;
   if (celebrate) {
     session.effects_shown += 1;
     await appendEvent(session.session_id, EventType.EFFECT_SHOWN, {
@@ -291,13 +302,12 @@ async function finishSession(session, reason) {
   });
 
   // 記録層: 読んだ区間(Play ブックスで位置が読めたセッションだけ)
-  const endedAt = Date.now();
+  const endedAt = at;
   const bookPos = await readBookPos(session.session_id);
-  await chrome.storage.session.remove(BOOK_POS_KEY);
-  // 最後のページに着いた: ページ表示が総ページに届いたか、pager が終わりを報告したか
-  const reachedEnd = bookPos
-    ? bookPos.furthest >= bookPos.total || Boolean(session.book_end_at)
-    : false;
+  await store.remove(BOOK_POS_KEY);
+  // 読了: このセッションで、1ページずつ進んで最後のページに着いた(pager の book_end)。
+  // スライダーや目次で最後へ飛んだ・最後のページで開き直した、では読了にしない
+  const reachedEnd = Boolean(session.book_end_at);
   if (bookPos && session.page_id) {
     try {
       const events = await getEventsBySession(session.session_id);
@@ -342,30 +352,25 @@ async function finishSession(session, reason) {
 
   // W3: タペリング制御器。セッションの成否で基準θを乗算的に動かす。
   // 本人には通知しない(気づかれない速度で減らす)。変化はtheta_updateとして記録。
+  // 再展開中(ホメオスタット)も漸減は通す — 目標は常に0。
   if (CONTROLLER.enabled) {
     try {
+      const now = Date.now();
       const st = await getState();
-      let next;
+      let next = nextState(st, session, dateKey(now));
       let reason = null;
-      if (st.homeostat?.active) {
-        next = { ...st }; // 再展開中は漸減しない。回復判定はホメオスタットが行う
-      } else {
-        next = nextState(st, session, dateKey(Date.now()));
-        if (next.theta !== st.theta) reason = isSuccess(session) ? 'success' : 'fail';
-        if (st.theta > 0 && next.theta === 0) {
-          // 卒業の瞬間: 見守りのベースライン(直近4週の補助なし読書時間の週平均)を記録
-          reason = 'graduate';
-          next.homeostat = {
-            baseline: await unassistedWeeklyAvgMin(),
-            active: false,
-            graduated_at: Date.now(),
-          };
-        }
+      if (next.theta !== st.theta) reason = isSuccess(session) ? 'success' : 'fail';
+      if (st.theta > 0 && next.theta === 0) {
+        reason = 'graduate';
+        next.homeostat = st.homeostat?.active
+          ? // 再展開からの再卒業: ベースラインは最初の卒業のものを使い続ける
+            { ...st.homeostat, active: false, graduated_at: now }
+          : // 卒業の瞬間: 見守りのベースライン(直近4週の補助なし読書時間の週平均)を記録
+            { baseline: await unassistedWeeklyAvgMin(), active: false, graduated_at: now };
       }
       // 卒業後(と再展開中)の見守り
       if (next.theta === 0 || next.homeostat?.active) {
-        const avg = await unassistedWeeklyAvgMin();
-        const after = applyHomeostat(next, avg);
+        const after = applyHomeostat(next, await unassistedWeeklyAvgMin(), now);
         if (after.theta !== next.theta) {
           reason = after.homeostat.active ? 'homeostat_redeploy' : 'homeostat_recover';
         }
@@ -384,15 +389,25 @@ async function finishSession(session, reason) {
     }
   }
 
-  // content scriptに片付けを頼む。タブが既に無ければそれでよい。
+  // 細かい計測(20秒ごとの鼓動・スクロール)は保持期間を過ぎたら消す。セッションの集計は残る
   try {
-    await chrome.tabs.sendMessage(session.tab_id, {
-      type: 'rs_stop',
-      celebrate,
-      read_min: Math.round(session.read_ms / 60_000),
-    });
+    const cutoff = Date.now() - RETENTION.detailEventsDays * 86_400_000;
+    await pruneEvents(cutoff, RETENTION.detailEventTypes);
   } catch {
-    /* タブclose済み */
+    /* 掃除の失敗は終了処理を妨げない */
+  }
+
+  // content scriptに片付けを頼む。タブが既に無ければそれでよい。
+  if (notify) {
+    try {
+      await chrome.tabs.sendMessage(session.tab_id, {
+        type: 'rs_stop',
+        celebrate,
+        read_min: Math.round(session.read_ms / 60_000),
+      });
+    } catch {
+      /* タブclose済み */
+    }
   }
 
   return { ...session, state: SessionState.ENDED, success, reason };
@@ -447,11 +462,12 @@ async function onReportImpl(event, payload, sender) {
       // 読了率は本の中での到達点。本文フレームにも渡し、ヒントの「%」に使わせる。
       const page = Number(payload.page);
       const total = Number(payload.total);
-      if (session.site !== 'play_books' || !(total > 0) || !(page >= 0 && page <= total)) return;
+      const valid = total > 0 && total <= 100_000 && page >= 0 && page <= total;
+      if (session.site !== 'play_books' || !valid) return;
       const pct = Math.round((page / total) * 100);
       // 記録層: 読んだ区間の素材(開始位置・最も先まで)。別キーに置く(BOOK_POS_KEY の注)
       const pos = await readBookPos(session.session_id);
-      await chrome.storage.session.set({
+      await store.set({
         [BOOK_POS_KEY]: {
           session_id: session.session_id,
           from: pos?.from ?? page,
@@ -484,7 +500,11 @@ async function onReportImpl(event, payload, sender) {
       break;
 
     case EventType.SCROLL:
-      session.completion_pct = Math.max(session.completion_pct, payload.completion_pct ?? 0);
+      // Play ブックスの読了率は本の中の位置(book_progress)だけで見る。content 側の段落の比率は
+      // 読み込まれた分の中での位置なので、本の途中でも100%になりうる
+      if (session.site !== 'play_books') {
+        session.completion_pct = Math.max(session.completion_pct, payload.completion_pct ?? 0);
+      }
       await appendEvent(session.session_id, EventType.SCROLL, {
         depth_pct: payload.depth_pct ?? 0,
       });
@@ -640,9 +660,30 @@ async function onWatchdogImpl() {
     await chrome.alarms.clear(WATCHDOG_ALARM); // 迷子のalarmを掃除
     return;
   }
+  // タブを閉じた知らせを取りこぼしていたら(SW の停止中など)、最後の記録の時点で閉じる
+  const tabAlive = await chrome.tabs.get(session.tab_id).then(() => true, () => false);
+  if (!tabAlive) {
+    await endSessionImpl(EndReason.CLOSE, { at: session.last_event_at, notify: false });
+    return;
+  }
   if (Date.now() - session.last_event_at > SESSION.idleTimeoutMs) {
     await endSessionImpl(EndReason.IDLE);
   }
+}
+
+/**
+ * ブラウザの再起動・拡張の更新で取り残されたセッションを閉じる(service-worker.js の onStartup と
+ * onInstalled から)。ページの content script はもう居ないので片付けは頼まず、終わった時刻は
+ * 最後の記録の時刻にする(閉じていた間を読書時間や離脱時間に数えない)。
+ */
+async function recoverImpl() {
+  const session = await getCurrent();
+  if (!session) return;
+  if (session.state === SessionState.ENDED) {
+    await setCurrent(null); // 終了処理の途中で止まっていた
+    return;
+  }
+  await endSessionImpl(EndReason.CLOSE, { at: session.last_event_at ?? Date.now(), notify: false });
 }
 
 /**
@@ -729,4 +770,5 @@ export const onWindowFocusChanged = serial(onWindowFocusChangedImpl);
 export const onTabRemoved = serial(onTabRemovedImpl);
 export const onTabUpdated = serial(onTabUpdatedImpl);
 export const onWatchdog = serial(onWatchdogImpl);
+export const recoverSession = serial(recoverImpl);
 export const setTheta = serial(setThetaImpl);

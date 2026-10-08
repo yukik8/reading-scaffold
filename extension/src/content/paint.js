@@ -26,11 +26,20 @@ const any = (xs) => xs[Math.floor(Math.random() * xs.length)];
 
 // ---- スプライト(形を一度だけ焼く) ------------------------------------------
 
+// 焼いた形の置き場。上限を超えたら一番長く使っていないものから捨てる(ことば吹雪の文字は本の字の
+// 種類だけ増えるので、上限が無いと長く読むほど膨らむ)。舞っている途中の部品は自分で形を持っている
 const cache = new Map();
+const CACHE_MAX = 240;
+// しぶきの形の種類。色ごとに焼くので、種類を増やすと焼く数がその分増える
+const SPLAT_SHAPES = 8;
 
 function bake(key, size, draw) {
   let s = cache.get(key);
-  if (s) return s;
+  if (s) {
+    cache.delete(key); // 使ったものを最新に回す
+    cache.set(key, s);
+    return s;
+  }
   const k = 2; // 高精細端末でもにじまないよう2倍で焼く
   const cv = document.createElement('canvas');
   cv.width = cv.height = Math.ceil(size * k);
@@ -40,7 +49,13 @@ function bake(key, size, draw) {
   draw(g, size);
   s = { cv, size };
   cache.set(key, s);
+  if (cache.size > CACHE_MAX) cache.delete(cache.keys().next().value);
   return s;
+}
+
+/** 焼いた形を全部捨てる(セッションの終わりに。ページに残るモジュールが画像を抱えたままにしない)。 */
+export function clearSprites() {
+  cache.clear();
 }
 
 /** 水彩の塗り: 地の色 → 中の明るいムラ → 縁の少し濃い色。path はその都度描く関数。 */
@@ -174,6 +189,8 @@ export class Paint {
     this.reduced = false;
     // 描かない四角(本文の枠)。{ x, y, w, h } を入れると、その中には何も描かない
     this.avoid = null;
+    // 部品が足されたときに呼ぶ(描画ループが止まっていれば回し直してもらう)
+    this.onWake = null;
   }
 
   /** 量の調整: θに比例(motion)、動きを減らす設定なら数個だけ。 */
@@ -190,6 +207,7 @@ export class Paint {
     if (this.items.length >= this.limit) this.items.shift();
     item.age = -(item.delay ?? 0);
     this.items.push(item);
+    this.onWake?.();
   }
 
   /** 絵の具のしぶきを、点の周りにいくつか咲かせる。 */
@@ -199,7 +217,7 @@ export class Paint {
       const d = rnd(0, radius);
       this.push({
         kind: 'splat', x: x + Math.cos(a) * d, y: y + Math.sin(a) * d,
-        sprite: sprites.splat(any(colors), (Math.random() * 97) | 0),
+        sprite: sprites.splat(any(colors), (Math.random() * SPLAT_SHAPES) | 0),
         scale: size * rnd(0.6, 1.25), angle: rnd(0, Math.PI * 2), life: rnd(1.6, 2.4), delay: i * 0.05,
       });
     }

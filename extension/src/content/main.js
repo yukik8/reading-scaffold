@@ -12,7 +12,7 @@
 const v = new URL(import.meta.url).search;
 const mod = (path) => import(chrome.runtime.getURL(path) + v);
 
-const { Msg, EventType } = await mod('src/shared/events.js');
+const { Msg, EventType, SessionState } = await mod('src/shared/events.js');
 const {
   SESSION,
   AMBIENT,
@@ -29,7 +29,7 @@ const {
 } = await mod('src/shared/config.js');
 const { createOverlay, setTextColumn, setDemoTheta, setDemoEnabled } =
   await mod('src/content/overlay.js');
-const { Paint } = await mod('src/content/paint.js');
+const { Paint, clearSprites } = await mod('src/content/paint.js');
 const { bearSVG } = await mod('src/content/bear.js');
 const { createStage } = await mod('src/content/stage.js');
 const { createMargin } = await mod('src/content/margin.js');
@@ -138,10 +138,14 @@ const visibleCount = new Map(); // idx → 見えている要素の数
 const seenOrder = [];
 const seenSet = new Set();
 
+// 段落の要素 → 段落番号。ページの DOM には印を付けない(属性を書くとページを改変することになる)
+const idxOf = new WeakMap();
+
 const observer = new IntersectionObserver(
   (entries) => {
     for (const e of entries) {
-      const idx = Number(e.target.dataset.rsIdx);
+      const idx = idxOf.get(e.target);
+      if (idx === undefined) continue;
       if (e.isIntersecting) {
         if (!visibleEls.has(e.target)) {
           visibleEls.add(e.target);
@@ -179,8 +183,7 @@ const paragraphKeys = new Map();
 
 paragraphs.forEach((p, i) => {
   if (PLAY_BOOKS) paragraphKeys.set(textOf(p), i);
-  // data属性は計測用の印。表示に影響しない(DOM改変はこの印までとする)。
-  p.dataset.rsIdx = String(i);
+  idxOf.set(p, i);
   observer.observe(p);
 });
 
@@ -485,7 +488,7 @@ function adoptNewParagraphs() {
   const added = [];
   let words = 0;
   for (const p of document.querySelectorAll(PLAY_BOOKS_PARAGRAPHS)) {
-    if (p.dataset.rsIdx !== undefined) continue;
+    if (idxOf.has(p)) continue;
     const key = textOf(p);
     const w = countWords(key);
     if (w === 0) continue;
@@ -498,7 +501,7 @@ function adoptNewParagraphs() {
       added.push(idx);
       words += w;
     }
-    p.dataset.rsIdx = String(idx);
+    idxOf.set(p, idx);
     observer.observe(p);
   }
   if (added.length === 0) return;
@@ -556,6 +559,20 @@ function rollTier() {
 let quizUsed = false;
 let quizInFlight = false;
 
+/**
+ * クイズを出したことを SW に知らせ、記録層の quiz_id を受け取る(記録は出した時点で行う —
+ * 先に作っただけで出さなかった問題は本棚に残さない)。回答の報告はこの番号を待って付ける。
+ */
+function recordShownQuiz(quiz, text) {
+  try {
+    return chrome.runtime
+      .sendMessage({ type: Msg.QUIZ_SHOWN, quiz, paragraph_text: text })
+      .then((res) => res?.quiz_id ?? null, () => null);
+  } catch {
+    return Promise.resolve(null); // 拡張のコンテキストが消えている
+  }
+}
+
 function maybeQuizInsteadOfHint() {
   if (EVENTS_ON) return false; // Play ブックスは「めくった直後の突然クイズ」に一本化する
   if (!QUIZ.enabled || quizUsed || quizInFlight) return false;
@@ -603,13 +620,14 @@ async function startQuiz() {
   // デモでも強さはθに従う(初心者=大当たり、玄人=静かな二波)。
   const rewardTier =
     theta >= QUIZ.jackpotMinTheta ? 'jackpot' : theta >= QUIZ.rainMinTheta ? 'rain' : 'shower';
+  const quizId = recordShownQuiz(res.quiz, best.slice(0, 2000));
   overlay.showQuiz(res.quiz, {
     rewardTier,
     // 出題元の段落を光の枠で指す(言葉ではなく光で「この段落の話」と伝える)
     sourceEl: paragraphs[sourceIdx]?.isConnected ? paragraphs[sourceIdx] : null,
-    onAnswer: (correct, chosenIndex, latencyMs) => {
+    onAnswer: async (correct, chosenIndex, latencyMs) => {
       report(EventType.QUIZ_ANSWERED, {
-        quiz_id: res.quiz_id ?? null,
+        quiz_id: await quizId,
         correct,
         chosen_index: chosenIndex,
         latency_ms: latencyMs,
@@ -777,7 +795,7 @@ async function prefetch(kind) {
     if (kind === 'quiz') {
       const res = await chrome.runtime.sendMessage({ type: Msg.QUIZ_REQUEST, paragraph_text: text });
       if (res?.ok && validQuiz(res.quiz)) {
-        stock.quiz = { quiz: res.quiz, quiz_id: res.quiz_id ?? null, turn };
+        stock.quiz = { quiz: res.quiz, text, turn };
       }
     } else {
       const res = await chrome.runtime.sendMessage({ type: Msg.TRIVIA_REQUEST, paragraph_text: text });
@@ -852,16 +870,17 @@ function showTrivia(item) {
   stage.trivia(item, { intensity: theta / THETA_MAX, onClose: () => prefetch('trivia') });
 }
 
-function showQuiz({ quiz, quiz_id }) {
+function showQuiz({ quiz, text }) {
   noteStimulus('quiz_flash', 'quiz');
+  const quizId = recordShownQuiz(quiz, text);
   stage.quiz(quiz, {
     intensity: theta / THETA_MAX,
     words: PAGE_EVENTS.words,
     glyphs: glyphsFromReading(),
-    onFirstAnswer: (correct, chosenIndex, latencyMs) => {
+    onFirstAnswer: async (correct, chosenIndex, latencyMs) => {
       markInteraction();
       report(EventType.QUIZ_ANSWERED, {
-        quiz_id,
+        quiz_id: await quizId,
         correct,
         chosen_index: chosenIndex,
         latency_ms: latencyMs,
@@ -970,23 +989,42 @@ function stop({ celebrate = false, readMin = 0 } = {}) {
   pageWatcher?.disconnect();
   clearTimeout(adoptTimer);
   removeEventListener('resize', updateTextColumn);
+  removeEventListener('pagehide', onPageHide);
   for (const [type, fn] of listeners) removeEventListener(type, fn);
-  for (const el of document.querySelectorAll('[data-rs-idx]')) delete el.dataset.rsIdx;
+  try {
+    chrome.runtime.onMessage.removeListener(onMessage);
+  } catch {
+    /* 拡張のコンテキストが消えている */
+  }
+  // このモジュールはページのモジュール表に残り続けるので、本文の写しや画像を抱えたままにしない
+  // (同じタブで何度も読むと、そのたびに積み上がる)
+  paragraphs.length = 0;
+  paragraphKeys.clear();
+  seenOrder.length = 0;
+  seenSet.clear();
+  visible.clear();
+  visibleCount.clear();
+  pendingHintAt.clear();
+  pendingTierAt.clear();
+  stock.quiz = null;
+  stock.trivia = null;
+  shownTrivia.clear();
   window.__readingScaffoldLoaded = false;
+  const teardown = () => {
+    overlay.destroy();
+    margin?.destroy();
+    clearSprites();
+  };
   if (celebrate) {
     if (margin) margin.hint('rare', theta / THETA_MAX);
     else overlay.celebrate(readMin);
-    setTimeout(() => {
-      overlay.destroy();
-      margin?.destroy();
-    }, demoEnabled && theta >= 5 ? 7_500 : 2_800);
+    setTimeout(teardown, demoEnabled && theta >= 5 ? 7_500 : 2_800);
   } else {
-    overlay.destroy();
-    margin?.destroy();
+    teardown();
   }
 }
 
-chrome.runtime.onMessage.addListener((msg) => {
+function onMessage(msg) {
   if (msg?.type === 'rs_stop') {
     stop({ celebrate: msg.celebrate === true, readMin: msg.read_min ?? 0 });
   } else if (msg?.type === 'rs_progress') {
@@ -1012,8 +1050,10 @@ chrome.runtime.onMessage.addListener((msg) => {
     setDemoTheta(theta);
     planHints();
   }
-});
-addEventListener('pagehide', () => stop(), { once: true });
+}
+const onPageHide = () => stop();
+chrome.runtime.onMessage.addListener(onMessage);
+addEventListener('pagehide', onPageHide, { once: true });
 
 // ---- 開始報告 -------------------------------------------------------------
 
@@ -1027,7 +1067,7 @@ report('content_ready', {
 // θはSWが持っているセッションから受け取る。SW側の保存処理と競走になっても
 // 取りこぼさないよう、セッションが見えるまで少し待って再試行する。
 let sessionInfo = null;
-for (let i = 0; i < 6 && !sessionInfo; i += 1) {
+for (let i = 0; i < 6 && !sessionInfo && !stopped; i += 1) {
   try {
     const res = await chrome.runtime.sendMessage({ type: Msg.GET_STATUS });
     sessionInfo = res?.session ?? null;
@@ -1036,28 +1076,34 @@ for (let i = 0; i < 6 && !sessionInfo; i += 1) {
   }
   if (!sessionInfo) await new Promise((r) => setTimeout(r, 250));
 }
+// 読み込みの途中でセッションが終わっていた(rs_stop は受け取る準備ができる前に届いて
+// 取りこぼしうる)。監視や演出を始めずに畳む
+if (!sessionInfo || sessionInfo.state === SessionState.ENDED) stop();
 // デモモード(プロフィールごと・既定OFF)を読み、演出系に反映してから計画する。
-demoEnabled = await readDemoFlag();
-setDemoEnabled(demoEnabled);
-theta = sessionInfo?.theta ?? 0;
-if (PLAY_BOOKS && Number.isFinite(sessionInfo?.book_pct)) bookPct = sessionInfo.book_pct;
-setDemoTheta(theta); // デモの増幅率もθ連動(玄人はほぼ通常=静か)
-planHints();
-if (PLAY_BOOKS && mode === 'full') adoptNewParagraphs(); // 重複して残っている要素(見えている方を含む)も監視する
-watchNewPages();
+if (!stopped) demoEnabled = await readDemoFlag();
+// 上の await の間に終了が届いていたら、監視を新しく作らない(作ると二度と外れない)
+if (!stopped) {
+  setDemoEnabled(demoEnabled);
+  theta = sessionInfo?.theta ?? 0;
+  if (PLAY_BOOKS && Number.isFinite(sessionInfo?.book_pct)) bookPct = sessionInfo.book_pct;
+  setDemoTheta(theta); // デモの増幅率もθ連動(玄人はほぼ通常=静か)
+  planHints();
+  if (PLAY_BOOKS && mode === 'full') adoptNewParagraphs(); // 重複して残っている要素(見えている方を含む)も監視する
+  watchNewPages();
 
-// 開始の合図。無言だと動いているかどうかが本人に分からない(診断可能性)。
-// Level/θ/バージョンを添えるのはドッグフーディング用: どの設定・どのコードで
-// 動いているかを一目で判別する(θ=0でヒントが出ないのは仕様、が見えるように)。
-if (mode === 'full') {
-  // θと版はストア版では出さない(補助の量は本人に見せない — 気づかない速さで減らす設計)
-  let dev = '';
-  if (!IS_STORE_BUILD) {
-    const ver = chrome.runtime.getManifest?.().version ?? '?';
-    dev = ` · ${sessionInfo ? `θ=${Number(theta).toFixed(1)}` : '設定未取得'} · v${ver}`;
+  // 開始の合図。無言だと動いているかどうかが本人に分からない(診断可能性)。
+  // Level/θ/バージョンを添えるのはドッグフーディング用: どの設定・どのコードで
+  // 動いているかを一目で判別する(θ=0でヒントが出ないのは仕様、が見えるように)。
+  if (mode === 'full') {
+    // θと版はストア版では出さない(補助の量は本人に見せない — 気づかない速さで減らす設計)
+    let dev = '';
+    if (!IS_STORE_BUILD) {
+      const ver = chrome.runtime.getManifest?.().version ?? '?';
+      dev = ` · θ=${Number(theta).toFixed(1)} · v${ver}`;
+    }
+    overlay.showNotice(`計測をはじめました(本文 約${totalWords.toLocaleString()}語)${dev}`, 4_000);
+  } else {
+    // 設計どおり: 本文検出に失敗したページは補助なしで計測のみ。
+    overlay.showNotice('本文を検出できないため、このページでは計測のみ行います', 4_500);
   }
-  overlay.showNotice(`計測をはじめました(本文 約${totalWords.toLocaleString()}語)${dev}`, 4_000);
-} else {
-  // 設計どおり: 本文検出に失敗したページは補助なしで計測のみ。
-  overlay.showNotice('本文を検出できないため、このページでは計測のみ行います', 4_500);
 }

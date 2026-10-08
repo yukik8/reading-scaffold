@@ -14,6 +14,9 @@ const { Msg } = await import(
 
 const PAGE_LABEL = /^\s*(\d+)(?:\s*[-–]\s*(\d+))?\s*\/\s*(\d+)\s*$/;
 const POLL_MS = 1_500;
+// 「めくって進んだ」とみなす1回の見回りあたりの前進の上限(見開きは2ページずつ進む)。
+// これより大きい前進はスライダーや目次で飛んだもので、読了の判定に使わない
+const MAX_STEP = 4;
 // 本文のページ。中の「1/2」などをページ表示と取り違えないよう、丸ごと見ない(走査も軽くなる)
 const BOOK_PAGE = 'READER-RENDERED-PAGE';
 
@@ -52,22 +55,6 @@ function readPosition() {
   return found;
 }
 
-/** 「次のページ」ボタンが押せない=最後のページ(英語UIは Next、日本語UIは 次)。 */
-function nextButtonDisabled() {
-  for (const b of document.querySelectorAll('button, [role="button"]')) {
-    if (!/next|次/i.test(b.getAttribute('aria-label') ?? '')) continue;
-    if (b.disabled || b.getAttribute('aria-disabled') === 'true') return true;
-  }
-  return false;
-}
-
-function sliderAtEnd() {
-  const slider = document.querySelector('[role="slider"][aria-valuemax]');
-  const now = Number(slider?.getAttribute('aria-valuenow'));
-  const max = Number(slider?.getAttribute('aria-valuemax'));
-  return Number.isFinite(now) && max > 0 && now >= max;
-}
-
 function send(event, payload) {
   try {
     chrome.runtime.sendMessage({ type: Msg.REPORT, event, payload });
@@ -76,8 +63,9 @@ function send(event, payload) {
   }
 }
 
-// 読了の判定: 最後のページに「進んで」着いた瞬間だけ1回報告する。ページ表示は戻る途中で
-// 最終ページを示すことがあるので、直近の移動が前向きのときに限る(戻ったときは出さない)。
+// 読了の判定: 最後のページに、めくって「進んで」着いた瞬間だけ1回報告する。
+// ページ表示が総ページに届いたこと(page === total)を必須にし、直近の移動は小さな前進に限る —
+// 戻ったとき・最後のページで開き直したとき・スライダーや目次で最後へ飛んだときは出さない。
 let last = '';
 let lastPage = null;
 let movedForward = false;
@@ -89,27 +77,44 @@ function check() {
     const key = `${pos.page}/${pos.total}`;
     if (key !== last) {
       last = key;
-      if (lastPage !== null) movedForward = pos.page > lastPage;
+      if (lastPage !== null) {
+        const step = pos.page - lastPage;
+        movedForward = step > 0 && step <= MAX_STEP;
+      }
       lastPage = pos.page;
       send('book_progress', pos);
     }
   }
-  const atEnd = (pos && pos.page >= pos.total) || sliderAtEnd() || nextButtonDisabled();
-  if (!endReported && movedForward && atEnd) {
+  if (!endReported && movedForward && pos && pos.page >= pos.total) {
     endReported = true;
-    send('book_end', pos ?? {});
+    send('book_end', pos);
   }
 }
 
-const timer = setInterval(check, POLL_MS);
+const timer = setInterval(() => {
+  // 拡張が更新・再読み込みされると SW と切れたまま残る。見張りを畳む
+  if (!chrome.runtime?.id) {
+    stop();
+    return;
+  }
+  check();
+}, POLL_MS);
 check();
+
+function onMessage(msg) {
+  if (msg?.type === 'rs_stop') stop();
+}
 
 function stop() {
   clearInterval(timer);
+  removeEventListener('pagehide', stop);
+  try {
+    chrome.runtime.onMessage.removeListener(onMessage);
+  } catch {
+    /* 拡張のコンテキストが消えている */
+  }
   window.__readingScaffoldLoaded = false;
 }
 
-chrome.runtime.onMessage.addListener((msg) => {
-  if (msg?.type === 'rs_stop') stop();
-});
+chrome.runtime.onMessage.addListener(onMessage);
 addEventListener('pagehide', stop, { once: true });

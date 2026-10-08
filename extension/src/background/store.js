@@ -66,11 +66,25 @@ export function openDb() {
         readings.createIndex('by_started', 'started_at');
       }
     };
-    req.onsuccess = () => resolve(req.result);
+    req.onsuccess = () => {
+      const db = req.result;
+      // 新しい版の拡張が DB を上げようとしたら、古い接続はすぐ閉じて道を空ける
+      // (開いたままのダッシュボード等が握っていると、上げる側が永久に待たされる)
+      db.onversionchange = () => {
+        db.close();
+        dbPromise = null;
+      };
+      db.onclose = () => {
+        dbPromise = null;
+      };
+      resolve(db);
+    };
     req.onerror = () => {
       dbPromise = null;
       reject(req.error);
     };
+    // 古い接続が閉じるのを待っている。閉じれば onsuccess まで進むので、ここでは待つだけ
+    req.onblocked = () => {};
   });
   return dbPromise;
 }
@@ -96,6 +110,7 @@ function runIndex(storeName, indexName, key) {
         const req = t.objectStore(storeName).index(indexName).get(key);
         t.oncomplete = () => resolve(req.result ?? null);
         t.onerror = () => reject(t.error);
+        t.onabort = () => reject(t.error);
       }),
   );
 }
@@ -111,6 +126,24 @@ export async function sha256Hex(text) {
 /** イベントを1件追記する。append-only。 */
 export function appendEvent(sessionId, type, payload, t = Date.now()) {
   return run('events', 'readwrite', (s) => s.add({ session_id: sessionId, t, type, payload }));
+}
+
+/**
+ * before より古い、types の型のイベントを消す(保持期間を過ぎた細かい計測)。
+ * 時刻の索引で古い方から辿る。数の多い鼓動が消えた後は、辿るのは残す型の少ない件数だけ。
+ */
+export function pruneEvents(before, types) {
+  const kinds = new Set(types);
+  return run('events', 'readwrite', (s) => {
+    const req = s.index('by_t').openCursor(IDBKeyRange.upperBound(before, true));
+    req.onsuccess = () => {
+      const cursor = req.result;
+      if (!cursor) return;
+      if (kinds.has(cursor.value.type)) cursor.delete();
+      cursor.continue();
+    };
+    return null;
+  });
 }
 
 /** セッションの集計キャッシュを書く。 */

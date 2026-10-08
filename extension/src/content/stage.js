@@ -28,17 +28,20 @@ const CSS = `
   opacity: calc(.82 + .18 * var(--i));
 }
 .rays {
-  position: absolute; left: 50%; top: 46%; width: 200vmax; height: 200vmax; margin: -100vmax 0 0 -100vmax;
-  background: conic-gradient(from 0deg,
-    rgba(255, 210, 63, .32) 0 26deg, transparent 26deg 60deg,
-    rgba(242, 107, 138, .26) 60deg 86deg, transparent 86deg 120deg,
-    rgba(76, 201, 163, .26) 120deg 146deg, transparent 146deg 180deg,
-    rgba(79, 163, 227, .26) 180deg 206deg, transparent 206deg 240deg,
-    rgba(167, 139, 250, .26) 240deg 266deg, transparent 266deg 300deg,
-    rgba(255, 179, 71, .3) 300deg 326deg, transparent 326deg 360deg);
-  filter: blur(9px); animation: spin 30s linear infinite; opacity: calc(.35 + .65 * var(--i));
+  /* 中心から画面の隅までを覆う最小の大きさ(152vmax)。縁はぼかし(filter)ではなく色の移り変わりで
+     柔らかくする — 画面より大きい面にぼかしを掛けて回し続けると重い */
+  position: absolute; left: 50%; top: 46%; width: 152vmax; height: 152vmax; margin: -76vmax 0 0 -76vmax;
+  background: conic-gradient(from 0deg, transparent 0deg,
+    rgba(255, 210, 63, .32) 6deg 26deg, transparent 32deg 60deg,
+    rgba(242, 107, 138, .26) 66deg 86deg, transparent 92deg 120deg,
+    rgba(76, 201, 163, .26) 126deg 146deg, transparent 152deg 180deg,
+    rgba(79, 163, 227, .26) 186deg 206deg, transparent 212deg 240deg,
+    rgba(167, 139, 250, .26) 246deg 266deg, transparent 272deg 300deg,
+    rgba(255, 179, 71, .3) 306deg 326deg, transparent 332deg 360deg);
+  /* 答えを待つ間は2周(1分)で止まる。正解・読了の間だけ速く回す */
+  animation: spin 30s linear 2; opacity: calc(.35 + .65 * var(--i));
 }
-.win .rays { animation-duration: 8s; }
+.win .rays { animation: spin 8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg) } }
 canvas.paint { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
 
@@ -205,13 +208,16 @@ canvas.paint { position: absolute; inset: 0; width: 100%; height: 100%; pointer-
 const MARKS = ['A', 'B', 'C'];
 
 export function createStage({ Paint, bearSVG }) {
-  let modal = null; // { host, root, paint, raf, autoClose, onKey, onClose, timers }
+  let modal = null; // mount() の層
   let corner = null;
 
   const reducedMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
   const ampOf = (intensity) => Math.min(1, Math.max(0.15, intensity));
 
-  /** Shadow DOM の層を1枚作り、水彩の canvas の描画ループを回す。 */
+  /**
+   * Shadow DOM の層を1枚作る。水彩の canvas の描画ループは、舞っているものがある間だけ回す
+   * (答えを待つクイズの間など、何も舞っていなければ止めておく。部品が足されると回り出す)。
+   */
   function mount(className, amp, html) {
     const host = document.createElement('div');
     host.style.cssText = 'all: initial; position: fixed; inset: 0; z-index: 2147483647; pointer-events: none;';
@@ -224,16 +230,31 @@ export function createStage({ Paint, bearSVG }) {
     const paint = new Paint(root.querySelector('canvas.paint'));
     paint.motion = amp;
     paint.reduced = reduced;
-    const layer = { host, root, wrap, paint, raf: 0, autoClose: 0, timers: [], onKey: null, onClose: null };
-    let last = performance.now();
+    const layer = {
+      host,
+      root,
+      wrap,
+      paint,
+      raf: 0,
+      autoClose: 0,
+      timers: [],
+      onKey: null,
+      onClose: null,
+      prevFocus: null, // 開く前にフォーカスがあった要素(閉じたら返す)
+    };
+    let last = 0;
     const loop = (t) => {
       const dt = Math.min(0.05, (t - last) / 1000);
       last = t;
       paint.update(dt);
       paint.draw();
+      layer.raf = paint.busy ? requestAnimationFrame(loop) : 0;
+    };
+    paint.onWake = () => {
+      if (layer.raf) return;
+      last = performance.now();
       layer.raf = requestAnimationFrame(loop);
     };
-    layer.raf = requestAnimationFrame(loop);
     return layer;
   }
 
@@ -242,8 +263,15 @@ export function createStage({ Paint, bearSVG }) {
     clearTimeout(layer.autoClose);
     for (const t of layer.timers) clearTimeout(t);
     if (layer.onKey) removeEventListener('keydown', layer.onKey, true);
+    // フォーカスが層の中にあれば、開く前の場所へ返す
+    const focused = layer.root.activeElement;
+    if (focused) {
+      focused.blur();
+      if (layer.prevFocus?.isConnected) layer.prevFocus.focus?.({ preventScroll: true });
+    }
     layer.wrap.classList.add('out');
     setTimeout(() => {
+      layer.paint.onWake = null;
       cancelAnimationFrame(layer.raf);
       layer.host.remove();
     }, 260);
@@ -374,6 +402,7 @@ export function createStage({ Paint, bearSVG }) {
   function quiz(q, { intensity = 1, words = true, glyphs = [], onFirstAnswer, onCelebrate, onClose } = {}) {
     closeModal();
     dismissCorner();
+    const prevFocus = document.activeElement;
     const amp = ampOf(intensity);
     const layer = mount(
       'modal',
@@ -389,6 +418,7 @@ export function createStage({ Paint, bearSVG }) {
     );
     layer.wrap.style.pointerEvents = 'auto';
     layer.onClose = onClose;
+    layer.prevFocus = prevFocus;
     modal = layer;
     const { root, wrap, paint } = layer;
     root.querySelector('.q').textContent = q.question;
@@ -453,14 +483,25 @@ export function createStage({ Paint, bearSVG }) {
     }
 
     buttons.forEach((b, i) => b.addEventListener('click', () => choose(i)));
-    root.querySelector('.close').addEventListener('click', closeModal);
-    // モーダル: 数字キーで回答、Esc で閉じる。下のページを矢印でめくらない
+    const closeButton = root.querySelector('.close');
+    closeButton.addEventListener('click', closeModal);
+    // 開いたら最初の選択肢にフォーカスを移す(キーボードだけでも答えられる)。本文のフレームに
+    // フォーカスが無いと移せないことがあるが、そのときもクリックと数字キーで答えられる
+    requestAnimationFrame(() => modal === layer && buttons[0]?.focus({ preventScroll: true }));
+    // モーダル: 数字キーで回答、Esc で閉じる、Tab はカードの中だけを回る。下のページを矢印でめくらない
     layer.onKey = (e) => {
       if (e.key === 'Escape') {
         closeModal();
       } else if (['1', '2', '3', 'a', 'b', 'c'].includes(e.key.toLowerCase())) {
         choose('123'.includes(e.key) ? Number(e.key) - 1 : 'abc'.indexOf(e.key.toLowerCase()));
-      } else if (!e.key.startsWith('Arrow') && e.key !== ' ' && e.key !== 'PageDown' && e.key !== 'PageUp') {
+      } else if (e.key === 'Tab') {
+        const items = [closeButton, ...buttons.filter((b) => !b.classList.contains('wrong'))];
+        const i = items.indexOf(root.activeElement);
+        items[(i + (e.shiftKey ? -1 : 1) + items.length) % items.length].focus({ preventScroll: true });
+      } else if (e.key === ' ' || e.key === 'Enter') {
+        // 下のページへは渡さず、フォーカスのあるボタンだけを押す
+        if (root.activeElement?.tagName === 'BUTTON') root.activeElement.click();
+      } else if (!e.key.startsWith('Arrow') && e.key !== 'PageDown' && e.key !== 'PageUp') {
         return;
       }
       e.preventDefault();

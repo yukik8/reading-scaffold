@@ -7,12 +7,20 @@
 // 不変条件(このファイルの外から壊せないようにする):
 //   1. θの目標値は常に0。エンゲージメント指標もクイズ正誤も入力にしない。
 //   2. 1日の総変化は±maxDailyChangeRatioまで。
-//   3. 卒業(θ=0)後は監視のみ。再展開はホメオスタットだけが行う。
+//   3. 卒業(θ=0)後は監視のみ。再展開はホメオスタットだけが行う。再展開中も目標は0(漸減は続く)。
 
 import { THETA_MAX, CONTROLLER, SUCCESS, THETA_NOISE, STABILITY } from '../shared/config.js';
 
 export function isSuccess(session) {
   return session.read_ms >= SUCCESS.minReadMs && session.escapes <= SUCCESS.maxEscapes;
+}
+
+/**
+ * 成否に数えないセッション: ほとんど読まず、離れてもいない(誤って開始した・本を切り替えた)。
+ * 読み始めてすぐ離れたセッションは失敗のまま数える — それは読書が続かなかったという信号。
+ */
+export function isNeutral(session) {
+  return (session.read_ms ?? 0) < CONTROLLER.neutralBelowMs && (session.escapes ?? 0) === 0;
 }
 
 /**
@@ -73,6 +81,7 @@ export function nextState(state, session, today) {
     day = today;
     day_start_theta = theta;
   }
+  if (isNeutral(session)) return { ...state, day, day_start_theta };
 
   const success = isSuccess(session);
   if (success) {
@@ -104,25 +113,33 @@ export function nextState(state, session, today) {
 /**
  * ホメオスタットモード(卒業後の見守り)。
  * state.homeostat = { baseline, active, graduated_at } は卒業の瞬間に記録される。
+ * - 卒業(再卒業)から窓の週数のあいだは見守るだけ(4週平均が卒業後の読書を映すまで待つ)
+ * - ベースラインが0(卒業前の4週がほぼ補助ありだった)なら、窓が明けた時点の週平均を使う
  * - 非展開中: 補助なし読書時間の週平均がベースライン×dropRatioを切ったら再展開
- * - 展開中: ベースライン×recoverRatioまで戻ったら再び0へ
- * 展開中の漸減は行わない(回復の判定は読書量だけで行う)。
+ * - 展開中: ベースライン×recoverRatioまで戻ったら再び0へ。展開中も通常の漸減は続く
+ *   (session.js が nextState を通す)ので、読めていれば漸減でも0に戻る — 目標は常に0
  */
-export function applyHomeostat(state, weeklyUnassistedMin) {
+export function applyHomeostat(state, weeklyUnassistedMin, now = Date.now()) {
   const h = state.homeostat;
-  if (!h?.baseline || h.baseline <= 0) return state; // 卒業前・記録なしは対象外
+  if (!h) return state; // 卒業前は対象外
+  const windowMs = CONTROLLER.homeostatWindowWeeks * 7 * 86_400_000;
+  const settled = now - (h.graduated_at ?? 0) >= windowMs;
+  if (!(h.baseline > 0)) {
+    if (settled && weeklyUnassistedMin > 0) {
+      return { ...state, homeostat: { ...h, baseline: weeklyUnassistedMin } };
+    }
+    return state;
+  }
   if (!h.active && state.theta === 0) {
-    if (weeklyUnassistedMin < h.baseline * CONTROLLER.homeostatDropRatio) {
-      return {
-        ...state,
-        theta: CONTROLLER.homeostatRedeployTheta,
-        homeostat: { ...h, active: true },
-      };
+    if (settled && weeklyUnassistedMin < h.baseline * CONTROLLER.homeostatDropRatio) {
+      const theta = CONTROLLER.homeostatRedeployTheta;
+      // 1日の変化幅の基準も再展開したθに置く(0のままだと次のセッションで0に戻される)
+      return { ...state, theta, day_start_theta: theta, homeostat: { ...h, active: true } };
     }
     return state;
   }
   if (h.active && weeklyUnassistedMin >= h.baseline * CONTROLLER.homeostatRecoverRatio) {
-    return { ...state, theta: 0, homeostat: { ...h, active: false } };
+    return { ...state, theta: 0, homeostat: { ...h, active: false, graduated_at: now } };
   }
   return state;
 }

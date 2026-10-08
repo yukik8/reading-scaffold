@@ -5,7 +5,7 @@
 
 import { Msg, EventType, SessionState } from '../shared/events.js';
 import { GOALS, DIAGNOSIS, SERVER, IS_STORE_BUILD, readServerConsent } from '../shared/config.js';
-import { nanoQuiz, nanoAnswer, nanoTrivia, pickTerms } from './ai.js';
+import { nanoQuiz, nanoAnswer, nanoTrivia, pickTerms, acceptQuiz } from './ai.js';
 import { serverTrivia, resetInstallId } from './server.js';
 import {
   startSession,
@@ -17,6 +17,7 @@ import {
   onTabRemoved,
   onTabUpdated,
   onWatchdog,
+  recoverSession,
   setTheta,
   getBookPosition,
   WATCHDOG_ALARM,
@@ -64,10 +65,19 @@ async function sessionOf(sender) {
 }
 
 // 新規インストール時だけオンボーディング(診断+目標選択)を開く。更新では開かない。
+// 更新のときは、ページに残った古い content script はもう SW と話せないので、進行中の
+// セッションを最後の記録の時点で閉じる。
 chrome.runtime.onInstalled.addListener((details) => {
   if (details.reason === 'install') {
     chrome.tabs.create({ url: chrome.runtime.getURL('src/onboarding/onboarding.html') });
+  } else if (details.reason === 'update') {
+    recoverSession();
   }
+});
+
+// ブラウザの起動: 前回ブラウザを閉じたときに読んでいたセッションが残っていれば閉じる
+chrome.runtime.onStartup.addListener(() => {
+  recoverSession();
 });
 
 chrome.tabs.onActivated.addListener((activeInfo) => {
@@ -179,44 +189,46 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           sendResponse({ ok: false, error: 'no-material' });
           break;
         }
-        // 記録層: 同じ段落から作ったクイズがあればそれを出す(作り直さない・回答の記録先がずれない)
+        // 同じ段落から作って出したことのあるクイズがあれば、それをもう一度出す(作り直さない)
         const hash = await sha256Hex(text);
         const existing = await getQuizByHash(hash).catch(() => null);
-        if (existing) {
-          sendResponse({
-            ok: true,
-            quiz: {
-              question: existing.question,
-              choices: existing.choices,
-              answer_index: existing.answer_index,
-            },
-            quiz_id: existing.quiz_id,
-            source: 'saved',
-          });
-          break;
-        }
-        const quiz = await nanoQuiz(text);
+        const quiz = existing ? acceptQuiz(existing) : await nanoQuiz(text);
         if (!quiz) {
           sendResponse({ ok: false, error: 'unavailable' });
           break;
         }
-        const data = { ok: true, quiz, source: 'nano' };
-        try {
-          data.quiz_id = await addQuiz({
-            page_id: current.page_id ?? null,
-            paragraph_hash: hash,
-            paragraph_excerpt: text.slice(0, 80),
-            // 出題した時点で開いていた本のページ
-            book_page: (await getBookPosition())?.page ?? null,
-            question: quiz.question,
-            choices: quiz.choices,
-            answer_index: quiz.answer_index,
-            created_at: Date.now(),
-          });
-        } catch {
-          /* 記録失敗は表示を妨げない */
+        // 記録はまだしない: 先に作っておくだけで、出さずに終わることがある。出したときに QUIZ_SHOWN で残す
+        sendResponse({ ok: true, quiz, source: existing ? 'saved' : 'nano' });
+        break;
+      }
+
+      case Msg.QUIZ_SHOWN: {
+        // 突然クイズを出した。ここで初めて記録層に残す(出した時点の本のページと一緒に)。
+        // 回答の記録(QUIZ_ANSWERED)は返した quiz_id に付く
+        const current = await sessionOf(sender);
+        const text = (msg.paragraph_text ?? '').trim().slice(0, 2000);
+        const quiz = acceptQuiz(msg.quiz);
+        if (!current || !quiz || text.length < 60) {
+          sendResponse({ ok: false, error: 'no-material' });
+          break;
         }
-        sendResponse(data);
+        const hash = await sha256Hex(text);
+        const existing = await getQuizByHash(hash).catch(() => null);
+        if (existing) {
+          sendResponse({ ok: true, quiz_id: existing.quiz_id });
+          break;
+        }
+        const quizId = await addQuiz({
+          page_id: current.page_id ?? null,
+          paragraph_hash: hash,
+          paragraph_excerpt: text.slice(0, 80),
+          book_page: (await getBookPosition())?.page ?? null,
+          question: quiz.question,
+          choices: quiz.choices,
+          answer_index: quiz.answer_index,
+          created_at: Date.now(),
+        });
+        sendResponse({ ok: true, quiz_id: quizId });
         break;
       }
 

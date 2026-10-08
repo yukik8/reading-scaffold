@@ -21,11 +21,14 @@ export const CONTROLLER = {
   graduateBelow: 0.3,
   // ホメオスタットモード: 卒業後、補助なし読書時間の4週移動平均が
   // 卒業時ベースラインのdropRatioを切ったら一時的にθを再展開し、
-  // recoverRatioまで戻ったら再び0へ(再展開中は漸減しない)。
+  // recoverRatioまで戻るか、通常の漸減で0に着いたら再び卒業する(再展開中も目標は0)。
+  // 卒業(再卒業)から窓の4週間は見守るだけで再展開しない — 4週平均が卒業後の読書を映すまで待つ。
   homeostatDropRatio: 0.5,
   homeostatRecoverRatio: 0.8,
   homeostatRedeployTheta: 1.5,
   homeostatWindowWeeks: 4,
+  // ごく短く、離れてもいないセッション(誤って開始・本の切り替え)は成否に数えない
+  neutralBelowMs: 60_000,
 };
 
 // セッションごとの実効θ = θ × (1±この幅の乱数)。
@@ -227,6 +230,13 @@ export const PAGE_EVENTS = {
 export const PAGE_SHOWER = {
   enabled: false,
   maxP: 1, // θ=THETA_MAX のとき、1回のページ送りで降る確率
+};
+
+// 端末内の記録の保持。細かい計測(20秒ごとの鼓動・スクロール)だけを期間で消す。
+// セッションの集計・本・読んだ区間・クイズ・問いは本人が消すまで残す(本人の資産)。
+export const RETENTION = {
+  detailEventsDays: 180,
+  detailEventTypes: ['dwell_tick', 'scroll'],
 };
 
 // success := read_ms >= 5分 かつ escapes <= 1

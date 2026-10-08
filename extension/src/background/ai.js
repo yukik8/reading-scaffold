@@ -148,12 +148,22 @@ export async function nanoQuiz(paragraphText) {
     'あなたは読解クイズの出題者。渡された段落の内容だけから、理解を確かめる3択クイズを1問作る。' +
     '本文と同じ言語で出題する。解説・褒め言葉・アドバイスは一切書かない。';
   const user = `次の段落から3択クイズを1問。正解は段落を読んでいれば分かるものにする。\n---\n${paragraphText}`;
-  const out = await promptJson(sys, user, QUIZ_SCHEMA);
-  if (!out || typeof out.question !== 'string' || !Array.isArray(out.choices)) return null;
-  if (out.choices.length !== 3) return null;
+  return acceptQuiz(await promptJson(sys, user, QUIZ_SCHEMA));
+}
+
+/** クイズの形を確かめて整える(問題文・選択肢3つ・正解の添字 0〜2)。合わなければ null。 */
+export function acceptQuiz(out) {
+  if (!out || typeof out.question !== 'string' || !out.question.trim()) return null;
+  if (!Array.isArray(out.choices) || out.choices.length !== 3) return null;
+  const choices = out.choices.map((c) => String(c ?? '').trim());
+  if (choices.some((c) => !c)) return null;
   const idx = Number(out.answer_index);
   if (!Number.isInteger(idx) || idx < 0 || idx > 2) return null;
-  return { question: out.question, choices: out.choices.map(String), answer_index: idx };
+  return {
+    question: out.question.trim().slice(0, 300),
+    choices: choices.map((c) => c.slice(0, 120)),
+    answer_index: idx,
+  };
 }
 
 const ANSWER_SCHEMA = {
