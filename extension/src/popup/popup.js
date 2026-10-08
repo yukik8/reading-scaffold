@@ -1,12 +1,16 @@
 import { Msg } from '../shared/events.js';
 import { getPage } from '../background/store.js';
 import { addClaim } from '../background/memory.js';
+import { bearSVG } from '../content/bear.js';
 
 const $ = (id) => document.getElementById(id);
 
 function send(type, extra = {}) {
   return chrome.runtime.sendMessage({ type, ...extra });
 }
+
+// 案内役のくま(docs/style.md §6)。本から顔を出すだけ。育たない・要求しない
+$('mascot').innerHTML = bearSVG('peek');
 
 function showError(message) {
   $('error').textContent = message;

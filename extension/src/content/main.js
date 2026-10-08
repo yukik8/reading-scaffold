@@ -25,6 +25,7 @@ const {
   CEILING,
   PAGE_CURL,
   DIFFICULTY,
+  PACE,
   IS_STORE_BUILD,
   readDemoFlag,
 } = await mod('src/shared/config.js');
@@ -191,6 +192,8 @@ paragraphs.forEach((p, i) => {
 
 // Play ブックスの余白の小さな演出(margin.js)。オーバーレイの後で作る(下の「余白の演出」)
 let margin = null;
+// いま見えている本文の枠(くまの置き場所を決めるのに使う)
+let textRect = null;
 
 // 本文カラムの位置をオーバーレイへ伝える(日常の星を余白に逃がすため)
 // Play ブックスは先読みされた画面外のページも DOM にあるので、見えている段落だけで測る。
@@ -210,6 +213,7 @@ function updateTextColumn() {
     }
   }
   const rect = Number.isFinite(left) ? { left, right, top, bottom, vertical: isVertical } : null;
+  textRect = rect;
   setTextColumn(rect);
   margin?.setText(rect);
 }
@@ -239,6 +243,108 @@ let pageInterrupted = false;
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) pageInterrupted = true;
 });
+
+// ---- 読む速さの推定(v0.24) --------------------------------------------------
+//
+// 本人がこのページのどのあたりを読んでいるかを、めくってからの時間 × 本人の速さ で推定する。
+// 速さは、このセッションのページの標本(語数/滞在時間)と、前回までの持ち越し(state.pace)を
+// ページ数で重み付けして混ぜる。ばらつき(cv)が大きい人ほど、推定を信じずに遅らせる。
+// 使い道は「うんちくを、その語を確実に読み過ぎた頃に出す」と「くまを読んでいる側に置かない」だけ。
+// 計測・制御・記録には使わない(速さの正は SW の page_read)。
+
+const PACED = PAGE_EVENTS.paced;
+let pacePrior = null; // state.pace = { wpm, cv, pages }(前回までの持ち越し)
+const paceLocal = []; // このセッションの標本 { words, ms }
+
+function median(xs) {
+  const a = [...xs].sort((x, y) => x - y);
+  const m = a.length >> 1;
+  return a.length % 2 ? a[m] : (a[m - 1] + a[m]) / 2;
+}
+
+/** 本人の速さ(語/分)とばらつき。標本が足りなければ null。 */
+function paceEstimate() {
+  const wpms = paceLocal.map((x) => x.words / (x.ms / 60_000));
+  const n = wpms.length;
+  const k = pacePrior?.wpm > 0 ? Math.min(pacePrior.pages ?? 0, PACED.priorWeight) : 0;
+  if (n + k < PACED.minSamples) return null;
+  let wpm = 0;
+  let cv = 0.5;
+  if (n > 0) {
+    const med = median(wpms);
+    const sd = Math.sqrt(wpms.reduce((a, x) => a + (x - med) ** 2, 0) / n);
+    const localCv = n >= 3 ? sd / med : (pacePrior?.cv ?? 0.5);
+    wpm = (med * n + (pacePrior?.wpm ?? 0) * k) / (n + k);
+    cv = (localCv * n + (pacePrior?.cv ?? 0.5) * k) / (n + k);
+  } else {
+    wpm = pacePrior.wpm;
+    cv = pacePrior.cv ?? 0.5;
+  }
+  if (!(wpm > 0)) return null;
+  return { wpm, cv: Math.min(1.5, Math.max(0.1, cv)) };
+}
+
+/** いま見えている段落を読む順に(段落番号順)。 */
+function pageOrder() {
+  return [...visible].sort((a, b) => a - b);
+}
+
+/**
+ * いま見えているページの語数と、語 term を読み終えるまでの語数(見つからなければ null)。
+ * 語が複数回出るなら最初の場所(そこを過ぎれば「読んだ」)。
+ */
+function wordsUntil(term) {
+  let before = 0;
+  let found = null;
+  for (const idx of pageOrder()) {
+    const t = textOf(paragraphs[idx]);
+    if (found === null && term) {
+      const at = t.indexOf(term);
+      if (at >= 0) found = before + countWords(t.slice(0, at + term.length));
+    }
+    before += countWords(t);
+  }
+  return { words: found, total: before };
+}
+
+/**
+ * ページの先頭から words 語を「確実に読み過ぎた」と見なせる時刻。
+ * 本人の速さの slowFactor 倍で読んでいると仮定し、ばらつきの分だけさらに遅らせる。
+ * ページの終わり(本人の速さそのままでの推定)の endGuardMs 手前より遅くなるなら null
+ * (めくりとぶつけない。読み終えたページの話として次のめくりで出す)。
+ */
+function pacedFireAt(words, total, est) {
+  const slow = (words / (est.wpm * PACED.slowFactor)) * 60_000 * (1 + PACED.cvMargin * est.cv);
+  const ms = Math.max(PACED.minMs, slow);
+  const endMs = (total / est.wpm) * 60_000 - PACED.endGuardMs;
+  if (ms > PACED.maxMs || ms > endMs) return null;
+  return pageStartedAt + ms;
+}
+
+/**
+ * くまを出す側。本文の枠と重ならない側を選び、同じなら読んでいる推定位置から遠い側。
+ * 縦書き(右から左)の見開きは前半が右ページなので、前半は左に出す。
+ * @param {number|null} progress ページのどこまで読んだかの推定(0〜1)。不明なら null
+ */
+function bearSide(progress) {
+  const coin = () => (Math.random() < 0.5 ? 'left' : 'right');
+  if (textRect) {
+    const w = Math.min(innerWidth * 0.36, 150);
+    const h = w * 1.05;
+    const overlap = (side) => {
+      const left = side === 'left' ? innerWidth * 0.03 : innerWidth * 0.97 - w;
+      const dx = Math.min(left + w, textRect.right) - Math.max(left, textRect.left);
+      const dy = Math.min(innerHeight, textRect.bottom) - Math.max(innerHeight - h, textRect.top);
+      return Math.max(0, dx) * Math.max(0, dy);
+    };
+    const l = overlap('left');
+    const r = overlap('right');
+    if (Math.abs(l - r) > 1) return l < r ? 'left' : 'right';
+  }
+  if (progress === null || progress === undefined) return coin();
+  const readerOnLeft = isVertical ? progress >= 0.5 : progress < 0.5;
+  return readerOnLeft ? 'right' : 'left';
+}
 
 function visibleRange() {
   if (visible.size === 0) return null;
@@ -762,6 +868,10 @@ const demoQuizTimer = QUIZ.enabled
 // うんちくとクイズは生成に数秒かかるので、読み終えたページ(既読で、いま見えていない段落)から
 // 先に1つずつ作ってストックしておき、ページ送りのたびに抽選する。
 // 頻度も派手さもθに比例し、θ=0では何も起きない。
+//
+// v0.24: 本人の速さが分かっていれば(上の「読む速さの推定」)、くまは めくった直後ではなく、
+// いま見えているページの中で出す — うんちくなら、その語を確実に読み過ぎた頃に、
+// 顔を出すだけなら、ページの半分近くを読み過ぎた頃に。抽選と頻度(θ配下)は変えない。
 
 const EVENTS_ON = PLAY_BOOKS && PAGE_EVENTS.enabled;
 const stage = createStage({ Paint, bearSVG });
@@ -772,6 +882,10 @@ const retryAt = { quiz: 0, trivia: 0 };
 // ストックはこのページ送りの回数を過ぎたら古いとみなして捨てる(「さっきのページ」でなくなる)
 const STALE_TURNS = { quiz: 6, trivia: 4 };
 const shownTrivia = new Set(); // 同じうんちくを繰り返さない
+// 速さに合わせた出し方の予定(いま見えているページ用)。めくったら捨てる
+let paced = null; // { turn, timer }
+// 間に合わなかったうんちく(語がページの終わり近く・生成が遅かった)。次のめくりで「さっきのページの」として出す
+let carry = null; // { text, term, turn }
 let lastBearAt = 0;
 let lastQuizAt = 0;
 let pageTurns = 0;
@@ -811,6 +925,20 @@ function readPageForEvents() {
   return { text: picked.join('\n').slice(-PAGE_EVENTS.maxTextChars), focus };
 }
 
+/** いま見えているページの本文(速さに合わせたうんちくの素材。読む順・上限つき)。 */
+function visiblePageText() {
+  const parts = [];
+  let chars = 0;
+  for (const idx of pageOrder()) {
+    const t = textOf(paragraphs[idx]);
+    if (!t) continue;
+    parts.push(t);
+    chars += t.length;
+    if (chars >= PAGE_EVENTS.maxTextChars) break;
+  }
+  return parts.join('\n').slice(0, PAGE_EVENTS.maxTextChars);
+}
+
 /** ことば吹雪の文字: 読み終えたページから漢字を中心に拾う(小書きのかな・記号は除く)。 */
 function glyphsFromReading() {
   const text = readTextForEvents();
@@ -838,6 +966,8 @@ function validQuiz(q) {
 async function prefetch(kind) {
   if (!EVENTS_ON || stopped || theta <= 0 || stock[kind] || inFlight[kind]) return;
   if (pageTurns < retryAt[kind]) return;
+  // 速さに合わせた出し方ができるなら、うんちくは出す直前にいま見えているページから作る(前のページの蓄えは要らない)
+  if (kind === 'trivia' && PACED.enabled && paceEstimate()) return;
   const { text, focus } = readPageForEvents();
   if (text.length < PAGE_EVENTS.minTextChars) return;
   inFlight[kind] = true;
@@ -894,35 +1024,116 @@ function maybePageEvent() {
   }
 
   const b = PAGE_EVENTS.bear;
-  if (now - lastBearAt < b.minGapMs || now - lastQuizAt < PAGE_EVENTS.afterQuizMs) return;
+  if (now - lastQuizAt < PAGE_EVENTS.afterQuizMs) return;
+  // 前のページで間に合わなかったうんちく: 抽選は済んでいるので、そのまま「さっきのページの」として出す
+  if (carry) {
+    const item = carry;
+    carry = null;
+    if (pageTurns - item.turn <= PACED.carryTurns) {
+      lastBearAt = now;
+      later(() => showTrivia(item, { from: 'prev', side: bearSide(null) }));
+      return;
+    }
+  }
+  if (now - lastBearAt < b.minGapMs) return;
   if (Math.random() >= b.maxP * scale) return;
   lastBearAt = now;
-  const talk = stock.trivia && Math.random() < b.weights.trivia / (b.weights.trivia + b.weights.peek);
+  const pTalk = b.weights.trivia / (b.weights.trivia + b.weights.peek);
+  const est = PACED.enabled ? paceEstimate() : null;
+  if (est) {
+    // 速さが分かっている: このページの中で、読み過ぎた頃に出す
+    schedulePaced(Math.random() < pTalk, est);
+    return;
+  }
+  const talk = stock.trivia && Math.random() < pTalk;
   if (talk) {
     const item = stock.trivia;
     stock.trivia = null;
-    later(() => showTrivia(item));
+    later(() => showTrivia(item, { from: 'prev', side: bearSide(null) }));
   } else {
-    later(showPeek);
+    later(() => showPeek({ side: bearSide(null) }));
   }
 }
 
-function noteStimulus(hintId, kind) {
+function cancelPaced() {
+  if (paced?.timer) clearTimeout(paced.timer);
+  paced = null;
+}
+
+/**
+ * 速さに合わせた出し方。めくった直後はまだ前のページが見えているので、可視が更新されてから
+ * (0.9秒後)いま見えているページを読み、出す時刻を決める。
+ * うんちく: いま見えているページから作り、その語を読み過ぎた頃。語が見つからない・ページの
+ * 終わり近く・生成が遅かった、なら次のめくりに持ち越す(ネタバレをしない側に倒す)。
+ * 顔を出すだけ: ページの peekAt を読み過ぎた頃。
+ */
+function schedulePaced(talk, est) {
+  cancelPaced();
+  const mine = { turn: pageTurns, timer: 0 };
+  paced = mine;
+  const alive = () => paced === mine && !stopped && !stage.modalOpen;
+  const at = (fireAt, fn) => {
+    if (!alive()) return;
+    mine.timer = setTimeout(() => alive() && fn(), Math.max(0, fireAt - Date.now()));
+  };
+  mine.timer = setTimeout(async () => {
+    if (!alive()) return;
+    const { total } = wordsUntil('');
+    if (total === 0) return;
+    if (!talk) {
+      const fireAt = pacedFireAt(total * PACED.peekAt, total, est);
+      if (fireAt) at(fireAt, () => showPeek({ side: bearSide(PACED.peekAt), timing: 'paced' }));
+      return;
+    }
+    const text = visiblePageText();
+    if (text.length < PAGE_EVENTS.minTextChars) {
+      const fireAt = pacedFireAt(total * PACED.peekAt, total, est);
+      if (fireAt) at(fireAt, () => showPeek({ side: bearSide(PACED.peekAt), timing: 'paced' }));
+      return;
+    }
+    let item = null;
+    try {
+      const res = await chrome.runtime.sendMessage({ type: Msg.TRIVIA_REQUEST, paragraph_text: text });
+      if (res?.ok && res.trivia?.text && !shownTrivia.has(res.trivia.text)) {
+        item = { text: res.trivia.text, term: res.trivia.term ?? '', turn: mine.turn };
+      }
+    } catch {
+      /* SW不在・生成失敗は静かに諦める */
+    }
+    if (!item || stopped) return;
+    if (paced !== mine) {
+      // 作っている間にめくられた。次のめくりで「さっきのページの」として出す
+      carry = item;
+      return;
+    }
+    const { words } = wordsUntil(item.term);
+    const fireAt = words === null ? null : pacedFireAt(words, total, est);
+    if (!fireAt) {
+      carry = item;
+      return;
+    }
+    at(fireAt, () => showTrivia(item, { from: 'now', side: bearSide(words / total), timing: 'paced' }));
+  }, 900);
+}
+
+function noteStimulus(hintId, kind, timing = 'turn') {
   hintsShown += 1;
   readMsSinceStimulus = 0;
   lastHintAt = Date.now(); // 直後に通常のヒントを重ねない
-  report(EventType.HINT_SHOWN, { hint_id: hintId, kind });
+  report(EventType.HINT_SHOWN, { hint_id: hintId, kind, timing });
 }
 
-function showPeek() {
-  noteStimulus('bear_peek', 'bear');
-  stage.peek({ intensity: theta / THETA_MAX });
+function showPeek({ side, timing = 'turn' } = {}) {
+  noteStimulus('bear_peek', 'bear', timing);
+  stage.peek({ intensity: theta / THETA_MAX, side });
 }
 
-function showTrivia(item) {
+/** @param {{ from?: 'prev'|'now', side?: 'left'|'right', timing?: string }} o */
+function showTrivia(item, { from = 'prev', side, timing = 'turn' } = {}) {
   shownTrivia.add(item.text);
-  noteStimulus('bear_trivia', 'trivia');
-  stage.trivia(item, { intensity: theta / THETA_MAX, onClose: () => prefetch('trivia') });
+  noteStimulus('bear_trivia', 'trivia', timing);
+  const caption = item.term ? `${from === 'now' ? 'いま読んだ' : 'さっきのページの'}「${item.term}」より` : '';
+  stage.trivia(item, { intensity: theta / THETA_MAX, side, caption, onClose: () => prefetch('trivia') });
 }
 
 function showQuiz({ quiz, text }) {
@@ -1063,6 +1274,8 @@ function stop({ celebrate = false, readMin = 0 } = {}) {
   pendingTierAt.clear();
   stock.quiz = null;
   stock.trivia = null;
+  cancelPaced();
+  carry = null;
   shownTrivia.clear();
   window.__readingScaffoldLoaded = false;
   const teardown = () => {
@@ -1094,13 +1307,20 @@ function onMessage(msg) {
       const now = Date.now();
       const words = visibleWords();
       if (!pageInterrupted && words > 0) {
+        const ms = now - pageStartedAt;
         const ds = [...visible].map(difficultyOfIdx);
         const d = ds.length ? Math.round((ds.reduce((a, b) => a + b, 0) / ds.length) * 100) / 100 : null;
-        report(EventType.PAGE_READ, { words, ms: now - pageStartedAt, d });
+        report(EventType.PAGE_READ, { words, ms, d });
+        // 速さの推定にも同じ標本を(SW と同じ条件で絞る)
+        if (ms >= PACE.minPageMs && ms <= PACE.maxPageMs && words >= PACE.minPageWords) {
+          paceLocal.push({ words, ms });
+          if (paceLocal.length > PACE.maxSamples) paceLocal.shift();
+        }
       }
       pageStartedAt = now;
       pageInterrupted = false;
     }
+    cancelPaced(); // 前のページの予定は捨てる(作りかけのうんちくは carry に回る)
     stage.dismissCorner(); // さっきのページのうんちくは引っ込める
     maybePageShower();
     maybePageEvent();
@@ -1138,6 +1358,7 @@ for (let i = 0; i < 6 && !sessionInfo && !stopped; i += 1) {
   try {
     const res = await chrome.runtime.sendMessage({ type: Msg.GET_STATUS });
     sessionInfo = res?.session ?? null;
+    if (res?.state?.pace?.wpm > 0) pacePrior = res.state.pace; // 前回までの読む速さ(持ち越し)
   } catch {
     /* SW再起動中など。次の試行に任せる */
   }
@@ -1168,7 +1389,8 @@ if (!stopped) {
       const ver = chrome.runtime.getManifest?.().version ?? '?';
       dev = ` · θ=${Number(theta).toFixed(1)} · v${ver}`;
     }
-    overlay.showNotice(`計測をはじめました(本文 約${totalWords.toLocaleString()}語)${dev}`, 4_000);
+    // 語数は出さない: Play ブックスではその瞬間に描画されているページ分しか数えられず、毎回ぶれる
+    overlay.showNotice(`計測をはじめました${dev}`, 4_000);
   } else {
     // 設計どおり: 本文検出に失敗したページは補助なしで計測のみ。
     overlay.showNotice('本文を検出できないため、このページでは計測のみ行います', 4_500);

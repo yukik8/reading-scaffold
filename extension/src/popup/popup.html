@@ -3,41 +3,57 @@
   <head>
     <meta charset="utf-8" />
     <title>reading-scaffold</title>
+    <link rel="stylesheet" href="../shared/paper.css" />
     <link rel="stylesheet" href="popup.css" />
   </head>
   <body>
     <main>
-      <!-- 初回のみ: 診断+目標選択が済むまでは、はじめの設定へ誘導する -->
-      <div id="onboard" hidden>
-        <p id="onboard-note">はじめに、いまの読書に合わせた設定をします(1分)。</p>
-        <button id="open-onboarding" type="button">はじめる</button>
-      </div>
+      <header class="paper-head rise">
+        <span id="mascot" class="mascot" aria-hidden="true"></span>
+        <h1>reading-scaffold</h1>
+      </header>
 
-      <div id="controls">
-        <button id="start" type="button">読む</button>
-        <button id="end" type="button" hidden>終える</button>
-        <p id="status" hidden></p>
-        <p id="error" hidden></p>
+      <!-- 初回のみ: 診断+目標選択が済むまでは、はじめの設定へ誘導する -->
+      <section id="onboard" class="card c2 rise" hidden>
+        <p class="lead">はじめに、いまの読書に合わせた設定をします。</p>
+        <p class="note">1分で終わります。</p>
+        <div class="actions">
+          <button id="open-onboarding" type="button">はじめる</button>
+        </div>
+      </section>
+
+      <!-- 読む/終える と ダッシュボードを同じ行に。ポップアップは縦が 600px で切れるので、
+           ダッシュボードへの入口を下に置かない(スクロールしないと見えない) -->
+      <div id="controls" class="rise">
+        <div class="row">
+          <button id="start" class="btn big" type="button">読む</button>
+          <button id="end" class="btn big coral" type="button" hidden>終える</button>
+          <!-- θはW3から自動漸減。手動上書きとデータ管理(全消去含む)はダッシュボードへ -->
+          <button id="open-dashboard" class="btn sky" type="button">ダッシュボード</button>
+        </div>
+        <p id="status" class="note" hidden></p>
+        <p id="error" class="note err" hidden></p>
       </div>
 
       <!-- 記憶の層(docs/design.md §8): 成功セッションの終わりに一度だけ、道具の小さなカード。
            本人が書いた一文が資産になる。無視すれば黙って消える(要求しない)。演出はつけない -->
-      <div id="claim" hidden>
-        <p id="claim-title" class="claim-title"></p>
+      <section id="claim" class="card c3" hidden>
+        <span class="eyebrow">主張</span>
+        <p id="claim-title" class="note"></p>
         <label for="claim-text" class="claim-label">いちばん大事だった主張を、ひとつ</label>
-        <input id="claim-text" type="text" maxlength="120" autocomplete="off" />
-        <div class="claim-actions">
+        <input id="claim-text" class="field" type="text" maxlength="120" autocomplete="off" />
+        <div class="actions">
           <button id="claim-save" type="button">残す</button>
-          <button id="claim-skip" type="button" class="quiet">閉じる</button>
+          <button id="claim-skip" class="btn quiet" type="button">閉じる</button>
         </div>
-      </div>
+      </section>
 
       <!-- Mirror: 主表示は補助なし読書時間の週次推移。
            連続日数・他人との比較・目標未達の警告は出さない(責めない原則)。 -->
-      <section id="mirror" aria-label="Mirror">
-        <h2>補助なし読書時間(週)</h2>
+      <section id="mirror" class="card c4 rise" aria-label="Mirror">
+        <span class="eyebrow">補助なし読書時間</span>
         <div id="chart" role="img" aria-label="週ごとの補助なし読書時間"></div>
-        <p id="empty" hidden>まだ記録がありません。読みたいページで「読む」を押すと計測が始まります。</p>
+        <p id="empty" class="note" hidden>まだ記録がありません。読みたい本で「読む」を押すと計測が始まります。</p>
         <dl id="sub">
           <dt>今週のセッション</dt><dd id="sessions">—</dd>
           <dt>今週の読書時間</dt><dd id="read-min">—</dd>
@@ -46,17 +62,11 @@
       </section>
 
       <!-- ライブラリ: 記録層の表示。事実の蓄積のみ(比較・警告・可変報酬なし) -->
-      <section id="library-sec" aria-label="ライブラリ" hidden>
-        <h2>ライブラリ</h2>
+      <section id="library-sec" class="card c5 rise" aria-label="ライブラリ" hidden>
+        <span class="eyebrow">ライブラリ</span>
         <ul id="library"></ul>
       </section>
 
-      <!-- θはW3から自動漸減(セッションの成否で動く)。手動上書きはダッシュボードに。
-           毎日触るpopupにダイヤルを置くと「気づかない漸減」を自分で壊せてしまう -->
-      <footer>
-        <!-- データ管理(全消去含む)はダッシュボードへ。誤タップ距離を最大化する -->
-        <button id="open-dashboard" type="button">ダッシュボード</button>
-      </footer>
     </main>
     <script type="module" src="popup.js"></script>
   </body>

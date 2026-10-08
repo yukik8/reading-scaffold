@@ -3,20 +3,22 @@
   <head>
     <meta charset="utf-8" />
     <title>reading-scaffold</title>
+    <link rel="stylesheet" href="../shared/paper.css" />
     <link rel="stylesheet" href="onboarding.css" />
   </head>
   <body>
     <main>
-      <header>
-        <span class="ring" aria-hidden="true"></span>
+      <header class="paper-head rise">
+        <span id="mascot" class="mascot" aria-hidden="true"></span>
         <h1>reading-scaffold</h1>
       </header>
 
       <!-- 導入 -->
-      <section id="step-intro" class="step">
+      <section id="step-intro" class="step card rise">
+        <span class="eyebrow">はじめに</span>
         <p class="lead">
           Google Play ブックスで読んでいる間、小さな補助が出ます。<br />
-          読めるようになるにつれ、補助は自動で減っていきます。
+          読めるようになるにつれ、補助は<span class="hl">自動で減っていきます</span>。
         </p>
         <p class="note">
           はじめに、いまの読書の様子を4つだけ聞かせてください。
@@ -28,20 +30,22 @@
       </section>
 
       <!-- 診断(4問。スコア・θは表示しない) -->
-      <section id="step-quiz" class="step" hidden>
+      <section id="step-quiz" class="step card c2" hidden>
+        <span class="eyebrow">いまの読書</span>
         <p class="progress" id="progress" aria-hidden="true"></p>
         <h2 id="qtext"></h2>
         <ul id="choices" class="choices"></ul>
-        <button id="back" class="back" type="button" hidden>← 戻る</button>
+        <button id="back" class="btn quiet back" type="button" hidden>← 戻る</button>
       </section>
 
       <!-- 目標選択(自己設定。おすすめを事前選択するだけで、決めるのは本人) -->
-      <section id="step-goal" class="step" hidden>
+      <section id="step-goal" class="step card c3" hidden>
+        <span class="eyebrow">目標</span>
         <h2>いまの目標を選んでください</h2>
         <p class="note">あとでダッシュボードからいつでも変えられます。目標は補助の量に影響しません。</p>
         <ul id="goals" class="choices"></ul>
         <!-- 外部送信の同意(任意・既定オフ)。Chrome Web Store の開示・同意の要件 -->
-        <div class="consent">
+        <div class="sub">
           <label class="consent-row">
             <input id="consent" type="checkbox" />
             <span>くまのうんちくに、言葉を調べるサーバを使う(任意)</span>
@@ -56,16 +60,41 @@
         <div class="actions">
           <button id="finish" type="button">この目標で始める</button>
         </div>
-        <p id="finish-error" class="note" hidden></p>
+        <p id="finish-error" class="note err" hidden></p>
       </section>
 
       <!-- 完了。スコアもθも言い渡さない -->
-      <section id="step-done" class="step" hidden>
-        <p class="lead">準備ができました。</p>
+      <section id="step-done" class="step card c4" hidden>
+        <span class="eyebrow">準備ができました</span>
+        <p class="lead">Play ブックスで本を開いて、ツールバーの拡張アイコンから「読む」を押すと始まります。</p>
         <p class="note">
-          Play ブックスで本を開いて、ツールバーの拡張アイコンから「読む」を押すと始まります。<br />
           記録はすべてこの端末の中に残ります。本の本文が端末の外へ送られることはありません。
         </p>
+
+        <!-- 内蔵AI(Gemini Nano)。クイズと問いへの答えはこれが端末の中で作る。
+             無くても演出と計測は動くので、ここで止めない(確認は任意) -->
+        <div class="sub nano">
+          <span class="pill">内蔵AI</span>
+          <h2>Gemini Nano について</h2>
+          <p class="note">
+            突然クイズと、問いへの答えは、Chrome に内蔵された AI がこの端末の中で作ります。
+            本の本文はどこにも送られません。使うには次が要ります。
+          </p>
+          <ul class="note-list">
+            <li>Chrome 138 以降</li>
+            <li>空きディスク 22GB 以上(モデル本体は約 4GB。初回だけダウンロードに数分かかります)</li>
+            <li>対応する GPU、またはメモリ 16GB 以上</li>
+          </ul>
+          <p class="note">
+            下のボタンで確認できます。初回はこのクリックでダウンロードが始まります。
+            足りないものがあっても、補助の演出と計測は動きます。あとからダッシュボードでも確認できます。
+          </p>
+          <div class="actions">
+            <button id="ai-check" type="button">内蔵AIを確認・準備</button>
+          </div>
+          <p id="ai-status" class="note" hidden></p>
+        </div>
+
         <div class="actions">
           <button id="close" type="button">閉じる</button>
         </div>

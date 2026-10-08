@@ -867,7 +867,8 @@ export function createOverlay() {
           toggle(false);
           return;
         }
-        if (e.key !== 'Enter' || busy) return;
+        // 日本語入力の変換を確定する Enter(isComposing / keyCode 229)では送らない。確定後のもう一度の Enter で送る
+        if (e.key !== 'Enter' || e.isComposing || e.keyCode === 229 || busy) return;
         const question = input.value.trim();
         if (!question) return;
         busy = true;

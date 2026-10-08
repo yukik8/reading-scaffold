@@ -192,6 +192,9 @@ canvas.paint { position: absolute; inset: 0; width: 100%; height: 100%; pointer-
   background: var(--paper); border-right: 3px solid var(--ink); border-bottom: 3px solid var(--ink);
   transform: skewX(-28deg) rotate(28deg); border-bottom-right-radius: 6px;
 }
+/* 左側に出すときは吹き出しも左に(しっぽを鏡写しにする) */
+.bubble.left { right: auto; left: 5%; transform-origin: 18% 115%; }
+.bubble.left::after { right: auto; left: 22%; transform: scaleX(-1) skewX(-28deg) rotate(28deg); }
 @keyframes bubble { from { transform: scale(.3); opacity: 0 } to { transform: scale(1); opacity: 1 } }
 .bubble .tag {
   position: absolute; left: 14px; top: -15px; background: #4cc9a3; color: #fff;
@@ -304,9 +307,9 @@ export function createStage({ Paint, bearSVG }) {
   }
 
   /** くまが本ごと顔を出して、少し揺れて、花びらを散らして引っ込む。 */
-  function peek({ intensity = 1, onClose } = {}) {
+  function peek({ intensity = 1, side, onClose } = {}) {
     const amp = ampOf(intensity);
-    const side = Math.random() < 0.5 ? 'left' : 'right';
+    if (side !== 'left' && side !== 'right') side = Math.random() < 0.5 ? 'left' : 'right';
     const layer = cornerBear('peek', side);
     layer.onClose = onClose;
     layer.paint.motion = amp;
@@ -320,24 +323,29 @@ export function createStage({ Paint, bearSVG }) {
     layer.autoClose = setTimeout(() => corner === layer && dismissCorner(), 2_900);
   }
 
-  /** くまが手を挙げて、さっきのページのうんちくを一言。クリックかページ送りで消える。 */
-  function trivia({ text, term = '' }, { intensity = 1, onClose } = {}) {
+  /**
+   * くまが手を挙げて、うんちくを一言。クリックかページ送りで消える。
+   * side は出す側(main.js が本文の枠と読んでいる位置から決める)。caption は出どころの一行。
+   */
+  function trivia({ text, term = '' }, { intensity = 1, side = 'right', caption, onClose } = {}) {
     const amp = ampOf(intensity);
+    if (side !== 'left' && side !== 'right') side = 'right';
+    const from = caption ?? (term ? `さっきのページの「${term}」より` : '');
     const layer = cornerBear(
       'talk',
-      'right',
-      `<div class="bubble" role="status"><span class="tag">うんちく</span><div class="text"></div>${term ? '<div class="from"></div>' : ''}</div>`,
+      side,
+      `<div class="bubble ${side}" role="status"><span class="tag">うんちく</span><div class="text"></div>${from ? '<div class="from"></div>' : ''}</div>`,
     );
     layer.onClose = onClose;
     layer.paint.motion = amp;
     layer.root.querySelector('.text').textContent = text;
-    if (term) layer.root.querySelector('.from').textContent = `さっきのページの「${term}」より`;
+    if (from) layer.root.querySelector('.from').textContent = from;
     layer.root.querySelector('.bubble').addEventListener('click', dismissCorner);
     layer.root.querySelector('.bear').addEventListener('click', dismissCorner);
     layer.timers.push(setTimeout(() => {
       if (corner !== layer) return;
       const r = layer.root.querySelector('.bubble').getBoundingClientRect();
-      layer.paint.scatter(r.right - 20, r.top, { count: 10, kinds: ['star', 'petal'], speed: 260, spread: 2, stars: 'gold' });
+      layer.paint.scatter(side === 'left' ? r.left + 20 : r.right - 20, r.top, { count: 10, kinds: ['star', 'petal'], speed: 260, spread: 2, stars: 'gold' });
     }, 700));
     // 読む長さに合わせて出しておく(1文字あたり約0.12秒、4〜12秒)
     const ms = Math.min(12_000, Math.max(4_000, 2_500 + text.length * 120));

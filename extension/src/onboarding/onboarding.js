@@ -4,6 +4,8 @@
 
 import { Msg } from '../shared/events.js';
 import { GOALS, DIAGNOSIS, writeServerConsent } from '../shared/config.js';
+import { nanoDiagnostics, describeNano } from '../background/ai.js';
+import { bearSVG } from '../content/bear.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -27,6 +29,9 @@ const QUESTIONS = [
   },
 ];
 
+// 案内役のくま(docs/style.md §6)
+$('mascot').innerHTML = bearSVG('peek');
+
 const answers = [];
 let currentQ = 0;
 let selectedGoal = null;
@@ -48,6 +53,12 @@ function show(stepId) {
   for (const id of ['step-intro', 'step-quiz', 'step-goal', 'step-done']) {
     $(id).hidden = id !== stepId;
   }
+  // 一枚ずつ出すので、切り替えのたびに入場の動きをやり直す
+  const el = $(stepId);
+  el.style.animation = 'none';
+  void el.offsetWidth;
+  el.style.animation = '';
+  window.scrollTo({ top: 0 });
 }
 
 function renderQuestion(i) {
@@ -145,6 +156,17 @@ $('finish').addEventListener('click', async () => {
     $('finish-error').hidden = false;
     $('finish').disabled = false;
   }
+});
+
+// 内蔵AIの確認・準備(ダッシュボードと同じ診断)。ページ文脈のクリックで実行するので、
+// 初回のモデルのダウンロードがこのジェスチャーで始まる
+$('ai-check').addEventListener('click', async () => {
+  $('ai-check').disabled = true;
+  $('ai-status').hidden = false;
+  $('ai-status').textContent = '確認中…(初回はモデルのダウンロードに数分かかることがあります)';
+  const d = await nanoDiagnostics();
+  $('ai-status').textContent = describeNano(d);
+  $('ai-check').disabled = false;
 });
 
 $('close').addEventListener('click', () => {

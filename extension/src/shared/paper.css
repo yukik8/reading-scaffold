@@ -1,0 +1,292 @@
+/* 絵本・水彩の土台(docs/style.md)。popup と onboarding が読む共通の紙。
+   値はダッシュボード(dashboard.css の :root)と同じ: 生成りの紙、セピアの太い線、水彩の6色、丸ゴシック。
+   ここにあるのは「紙・文字・札・ボタン・カード」だけ。画面ごとの配置は各自の CSS で。 */
+
+:root {
+  --paper: #fffdf6;
+  --bg: #fbf3e4;
+  --ink: #4a2f24;
+  --muted: rgba(74, 47, 36, 0.62);
+  --faint: rgba(74, 47, 36, 0.14);
+  --line: 3px solid var(--ink);
+  --coral: #f26b8a;
+  --honey: #ffb347;
+  --sun: #ffd23f;
+  --mint: #4cc9a3;
+  --sky: #4fa3e3;
+  --lilac: #a78bfa;
+  --honey-deep: #e8964a;
+  --coral-deep: #d9486b;
+  --danger: #d9486b;
+  --rainbow: linear-gradient(90deg, #f26b8a, #ffb347, #ffd23f, #4cc9a3, #4fa3e3, #a78bfa);
+  color-scheme: light;
+  font-family: 'Hiragino Maru Gothic ProN', 'Zen Maru Gothic', 'M PLUS Rounded 1c', 'Hiragino Sans',
+    sans-serif;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+/* hidden 属性を display:grid 等より必ず優先させる */
+[hidden] {
+  display: none !important;
+}
+
+body {
+  margin: 0;
+  color: var(--ink);
+  font-size: 14px;
+  line-height: 1.7;
+  /* 紙のざらつき */
+  background: var(--bg)
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='180' height='180'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 .29 0 0 0 0 .18 0 0 0 0 .14 0 0 0 .07 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+}
+
+/* 四隅の水彩のにじみ */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1000 1000' preserveAspectRatio='xMidYMid slice'><filter id='w' x='-30%' y='-30%' width='160%' height='160%'><feTurbulence type='fractalNoise' baseFrequency='.011' numOctaves='3' seed='7'/><feDisplacementMap in='SourceGraphic' scale='70' xChannelSelector='R' yChannelSelector='G'/></filter><g filter='url(%23w)' stroke-width='5'><circle cx='40' cy='60' r='190' fill='%23f26b8a' fill-opacity='.13' stroke='%23f26b8a' stroke-opacity='.2'/><circle cx='980' cy='140' r='160' fill='%234fa3e3' fill-opacity='.12' stroke='%234fa3e3' stroke-opacity='.18'/><circle cx='960' cy='930' r='200' fill='%234cc9a3' fill-opacity='.13' stroke='%234cc9a3' stroke-opacity='.2'/><circle cx='20' cy='900' r='170' fill='%23ffd23f' fill-opacity='.2' stroke='%23ffb347' stroke-opacity='.22'/></g></svg>")
+    center / cover no-repeat;
+}
+
+/* ---- ヘッダ: 本から顔を出すくま + 蛍光ペンの題 ---- */
+
+.paper-head {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+}
+
+.mascot {
+  flex: none;
+  width: 74px;
+  margin-bottom: -6px;
+}
+
+.mascot svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.paper-head h1 {
+  margin: 0 0 6px;
+  font-size: 21px;
+  font-weight: 900;
+  letter-spacing: 0.02em;
+  line-height: 1.3;
+  background: linear-gradient(transparent 62%, rgba(255, 210, 63, 0.6) 62%, rgba(255, 179, 71, 0.5) 92%, transparent 92%);
+  padding: 0 4px;
+}
+
+/* ---- 紙のカード(手描きの角丸 + 色付きのずらし影。影の色は順に回す) ---- */
+
+.card {
+  position: relative;
+  background: var(--paper);
+  border: var(--line);
+  border-radius: 24px 18px 26px 20px / 20px 26px 18px 24px;
+  padding: 30px 20px 20px;
+  --shadow: rgba(242, 107, 138, 0.34);
+  box-shadow: 6px 8px 0 var(--shadow);
+}
+
+.card.c2 {
+  --shadow: rgba(255, 179, 71, 0.42);
+  border-radius: 20px 26px 18px 24px / 24px 18px 26px 20px;
+}
+
+.card.c3 {
+  --shadow: rgba(76, 201, 163, 0.38);
+  border-radius: 26px 20px 24px 18px / 18px 24px 20px 26px;
+}
+
+.card.c4 {
+  --shadow: rgba(79, 163, 227, 0.34);
+  border-radius: 18px 24px 20px 26px / 26px 20px 24px 18px;
+}
+
+.card.c5 {
+  --shadow: rgba(167, 139, 250, 0.34);
+}
+
+/* 本の帯ラベル(見出し): カードの上辺にかける */
+.eyebrow {
+  position: absolute;
+  left: 18px;
+  top: -17px;
+  transform: rotate(-2.5deg);
+  background: #fff8ea;
+  background-image: var(--rainbow), var(--rainbow);
+  background-size: 100% 4px;
+  background-repeat: no-repeat;
+  background-position: top, bottom;
+  border: var(--line);
+  border-radius: 4px;
+  padding: 5px 14px 4px;
+  font-size: 13px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
+.card.c2 .eyebrow,
+.card.c4 .eyebrow {
+  transform: rotate(2deg);
+}
+
+/* 丸ラベル(小見出し) */
+.pill {
+  display: inline-block;
+  border-radius: 999px;
+  background: rgba(76, 201, 163, 0.22);
+  padding: 1px 10px;
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.14em;
+}
+
+.note {
+  font-size: 12px;
+  color: var(--muted);
+  margin: 4px 0;
+}
+
+.lead {
+  margin: 0 0 10px;
+  font-size: 16px;
+  font-weight: 800;
+  line-height: 1.7;
+}
+
+/* 強調は蛍光ペン */
+.hl {
+  background: linear-gradient(transparent 60%, rgba(255, 210, 63, 0.6) 60%, rgba(255, 210, 63, 0.6) 90%, transparent 90%);
+  padding: 0 2px;
+}
+
+/* ---- ボタン: 丸い錠剤形、色付きのずらし影。押すと影の位置まで沈む ---- */
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 12px 0 4px;
+}
+
+.btn,
+.actions button {
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 800;
+  padding: 7px 18px;
+  border: 2.5px solid var(--ink);
+  border-radius: 999px;
+  background: var(--paper);
+  color: var(--ink);
+  box-shadow: 3px 4px 0 rgba(255, 179, 71, 0.5);
+  cursor: pointer;
+  transition: transform 0.12s ease, box-shadow 0.12s ease;
+}
+
+.actions button:nth-child(2),
+.btn.mint {
+  box-shadow: 3px 4px 0 rgba(76, 201, 163, 0.45);
+}
+
+.btn.sky {
+  box-shadow: 3px 4px 0 rgba(79, 163, 227, 0.4);
+}
+
+.btn.coral {
+  box-shadow: 3px 4px 0 rgba(242, 107, 138, 0.4);
+}
+
+.btn:hover,
+.actions button:hover {
+  transform: translate(-1px, -1px);
+}
+
+.btn:active,
+.actions button:active {
+  transform: translate(3px, 4px);
+  box-shadow: none;
+}
+
+.btn:disabled,
+.actions button:disabled {
+  opacity: 0.5;
+  cursor: default;
+  transform: none;
+}
+
+/* 静かなボタン(閉じる・戻る): 線も影もなし(.actions の中でも順番の影を付けない) */
+.btn.quiet,
+.actions .btn.quiet {
+  border-color: transparent;
+  background: none;
+  box-shadow: none;
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.btn.quiet:hover,
+.actions .btn.quiet:hover {
+  color: var(--ink);
+  transform: none;
+}
+
+/* ---- 入力: 破線の紙 ---- */
+
+.field {
+  font: inherit;
+  width: 100%;
+  padding: 8px 10px;
+  border: 2px dashed var(--faint);
+  border-radius: 10px;
+  background: var(--paper);
+  color: var(--ink);
+}
+
+.field:focus {
+  outline: none;
+  border-style: solid;
+  border-color: var(--ink);
+}
+
+input[type='checkbox'] {
+  accent-color: var(--honey-deep);
+}
+
+:focus-visible {
+  outline: 2.5px solid var(--sky);
+  outline-offset: 2px;
+}
+
+/* ---- 入場だけ、ぽんと置く ---- */
+
+@media (prefers-reduced-motion: no-preference) {
+  .rise {
+    animation: rise 0.55s cubic-bezier(0.2, 1.4, 0.4, 1) both;
+  }
+  .rise:nth-child(2) { animation-delay: 0.06s; }
+  .rise:nth-child(3) { animation-delay: 0.12s; }
+  .rise:nth-child(4) { animation-delay: 0.18s; }
+  .rise:nth-child(5) { animation-delay: 0.24s; }
+  .rise:nth-child(6) { animation-delay: 0.3s; }
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(14px) scale(0.98);
+  }
+}

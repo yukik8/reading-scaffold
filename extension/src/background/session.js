@@ -22,7 +22,17 @@
 // 最後の記録の時点で閉じる。
 
 import { EventType, EndReason, SessionState } from '../shared/events.js';
-import { SESSION, SUCCESS, THETA_MAX, CONTROLLER, STABILITY, RETENTION, readDemoFlag, PACE } from '../shared/config.js';
+import {
+  SESSION,
+  SUCCESS,
+  THETA_MAX,
+  CONTROLLER,
+  STABILITY,
+  RETENTION,
+  readDemoFlag,
+  PACE,
+  PAGE_EVENTS,
+} from '../shared/config.js';
 import { dateKey } from '../shared/time.js';
 import {
   appendEvent,
@@ -45,6 +55,7 @@ import {
   isSuccess,
   stabilityScore,
   paceSummary,
+  blendPace,
 } from './controller.js';
 import { nextStateStaircase } from './staircase.js';
 import { onQuizAnswered } from './memory.js';
@@ -310,6 +321,18 @@ async function finishSession(session, reason, { at, notify }) {
     backs: session.backs ?? 0,
   });
 
+  // 読む速さの持ち越し(v0.24): 次のセッションの最初のページから、速さに合わせた出し方ができるように。
+  // 制御には使わない(state.pace は content script が GET_STATUS で読むだけ)
+  if (pace && pace.pages >= 2) {
+    try {
+      const st = await getState();
+      st.pace = blendPace(st.pace, pace, PAGE_EVENTS.paced.priorWeight);
+      await putState(st);
+    } catch {
+      /* 持ち越せなくても終了処理は続ける */
+    }
+  }
+
   // 記録層: 読んだ区間(Play ブックスで位置が読めたセッションだけ)
   const endedAt = at;
   const bookPos = await readBookPos(session.session_id);
@@ -545,6 +568,8 @@ async function onReportImpl(event, payload, sender) {
       await appendEvent(session.session_id, EventType.HINT_SHOWN, {
         hint_id: payload.hint_id,
         kind: payload.kind ?? 'canned',
+        // くま・うんちくの出し方(v0.24): めくった直後(turn)か、読む速さに合わせて(paced)か
+        ...(payload.timing ? { timing: payload.timing } : {}),
       });
       break;
 

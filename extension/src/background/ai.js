@@ -87,6 +87,44 @@ async function promptJson(systemPrompt, userPrompt, schema) {
  * 実行するとユーザージェスチャーが保たれ、DL起動が確実になる)。
  * create()も試み、進捗・エラーメッセージまで返す。
  */
+/**
+ * 診断の結果を、本人に見せる一文にする(ダッシュボードとオンボーディングで同じ言葉を使う)。
+ * 2026-10-08 に分かったこと: 'unavailable' のいちばん多い原因は空きディスク不足(22GB 未満)で、
+ * モデルが端末にあっても Chrome は登録を外す。空けて再起動すれば戻る。
+ */
+export function describeNano(d) {
+  if (!d.hasApi) {
+    return (
+      'このChromeには内蔵AI(Prompt API)がありません。Chrome 138以降に更新してください。' +
+      '内蔵AIが無いとクイズと問いへの答えは出ません(演出と計測は動きます)。'
+    );
+  }
+  if (d.availability === 'unavailable') {
+    return (
+      'この端末ではいま内蔵AIを使えません。いちばん多い原因は空きディスク不足です(22GB以上が必要)。' +
+      '空きを作ってから Chrome を完全に終了して開き直し、もう一度押してください。' +
+      'それでも使えなければ、対応するGPUかメモリが足りない端末です。くまのうんちくは「言葉を調べるサーバ」をオンにすると出ます。'
+    );
+  }
+  if (d.created && d.sample) {
+    return '内蔵AIの準備ができました。クイズと問いへの答えは、この端末の中で作られます。';
+  }
+  if (/space|disk|storage/i.test(d.createError ?? '')) {
+    return (
+      'モデルのダウンロードに空き容量が足りません(22GB以上必要)。空きを作ってから、もう一度押してください。' +
+      'それまではクイズと問いへの答えは出ません。'
+    );
+  }
+  if (d.createError || d.promptError) {
+    return `準備中に問題: ${d.createError ?? d.promptError}` + (d.downloadProgress >= 0 ? `(DL ${d.downloadProgress}%)` : '');
+  }
+  return (
+    `状態: ${d.availability}` +
+    (d.downloadProgress >= 0 ? `・DL ${d.downloadProgress}%` : '') +
+    '。ダウンロード中の場合は、終わってからもう一度押してください。'
+  );
+}
+
 export async function nanoDiagnostics() {
   const out = { hasApi: typeof LanguageModel !== 'undefined' };
   if (!out.hasApi) return out;

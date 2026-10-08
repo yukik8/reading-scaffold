@@ -8,6 +8,7 @@ Google Play ブックス(ウェブ版)で本を読む時間を支える Chrome �
 
 - 設計(唯一の一次資料): [docs/design.md](docs/design.md) — θ・三分法(演出/記録/道具)・制御器・演出・データ・不変条件
 - 公開の手順(ストア申請・Vercel・zip): [docs/release.md](docs/release.md)
+- 見た目と言葉のテイスト(画面・演出・図を作るとき): [docs/style.md](docs/style.md)
 - プライバシーポリシー(公開用): [PRIVACY.md](PRIVACY.md)
 - うんちくサーバの運用: [server/README.md](server/README.md)
 - 文献の調査: [docs/research/](docs/research/)。古い設計書は [docs/archive/](docs/archive/)

@@ -16,7 +16,7 @@ import {
 import { bearSVG } from '../content/bear.js';
 import { buildMirror } from '../background/mirror.js';
 import { buildKpi } from '../background/kpi.js';
-import { nanoDiagnostics } from '../background/ai.js';
+import { nanoDiagnostics, describeNano } from '../background/ai.js';
 import {
   buildBookshelf,
   isBookPage,
@@ -691,29 +691,7 @@ $('ai-check').addEventListener('click', async () => {
   $('ai-check').disabled = true;
   $('ai-status').textContent = '確認中…(初回はモデルのダウンロードに数分かかることがあります)';
   const d = await nanoDiagnostics();
-  let msg;
-  if (!d.hasApi) {
-    msg =
-      'このChromeには内蔵AI(Prompt API)がありません。Chrome 138以降に更新してください。' +
-      '内蔵AIが無いとクイズと問いへの答えは出ません(演出と計測は動きます)。';
-  } else if (d.availability === 'unavailable') {
-    msg =
-      'この端末では内蔵AIを使えません(空きディスク約22GB・対応するGPUかメモリが必要)。' +
-      'クイズと問いへの答えは出ません。くまのうんちくは、上の「言葉を調べるサーバ」をオンにすると出ます。';
-  } else if (d.created && d.sample) {
-    msg = '内蔵AIの準備ができました。クイズと問いへの答えは、この端末の中で作られます。';
-  } else if (/space|disk|storage/i.test(d.createError ?? '')) {
-    msg =
-      'モデルのダウンロードに空き容量が足りません(約22GB必要)。空きを作ってから、もう一度押してください。' +
-      'それまではクイズと問いへの答えは出ません。';
-  } else if (d.createError || d.promptError) {
-    msg = `準備中に問題: ${d.createError ?? d.promptError}` +
-      (d.downloadProgress >= 0 ? `(DL ${d.downloadProgress}%)` : '');
-  } else {
-    msg = `状態: ${d.availability}` +
-      (d.downloadProgress >= 0 ? `・DL ${d.downloadProgress}%` : '') +
-      '。ダウンロード中の場合は、終わってからもう一度押してください。';
-  }
+  const msg = describeNano(d);
   $('ai-status').textContent = msg;
   $('ai-check').disabled = false;
 });

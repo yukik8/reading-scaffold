@@ -48,6 +48,26 @@ export function paceSummary(samples) {
 }
 
 /**
+ * 読む速さの持ち越し(state.pace)。前回までの値を priorWeight ページ分の標本として、
+ * 今回のページ数と重み付き平均する。次のセッションの最初のページから、速さに合わせた出し方ができる。
+ * @param {{ wpm, cv, pages } | null | undefined} prev
+ * @param {{ wpm, cv, pages } | null} pace 今回の要約(paceSummary)
+ * @returns {{ wpm, cv, pages, updated_at }}
+ */
+export function blendPace(prev, pace, priorWeight = 6, now = Date.now()) {
+  if (!pace || !(pace.wpm > 0) || pace.pages < 1) return prev ?? null;
+  const k = prev?.wpm > 0 ? Math.min(prev.pages ?? 0, priorWeight) : 0;
+  const n = pace.pages;
+  const cvPrev = prev?.cv ?? pace.cv ?? 0.5;
+  return {
+    wpm: Math.round(((prev?.wpm ?? 0) * k + pace.wpm * n) / (k + n)),
+    cv: Math.round(((cvPrev * k + (pace.cv ?? cvPrev) * n) / (k + n)) * 100) / 100,
+    pages: Math.min(k + n, priorWeight),
+    updated_at: now,
+  };
+}
+
+/**
  * 読書安定度 S ∈ [0,1]。行動シグナルだけから計算する(理解・エンゲージメント指標は入れない)。
  * SUCCESS.judge === 'stability' のとき outcomeOf がこれを3値に切って制御器へ渡す。
  * @param {object} session - { read_ms, escapes, away_total_ms, quick_returns, pace_cv }
