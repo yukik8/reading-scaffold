@@ -9,10 +9,10 @@
 
 | 項目 | 今 | すること |
 |---|---|---|
-| 製品名 | manifest の `name` が「reading-scaffold (dev)」 | 決めて manifest・PRIVACY.md・掲載文にそろえる |
-| アイコン | 1枚もない | 拡張用 16/32/48/128px(manifest の `icons` と `action.default_icon`)、ストア用 128px |
-| ストアの画像 | なし | スクリーンショット 1280×800(1枚以上)、小さいプロモーション タイル 440×280 |
-| プライバシーポリシー | PRIVACY.md の連絡先が空 | 連絡先を書き、公開 URL を決める。リポジトリは公開なので GitHub の URL(`https://github.com/yukik8/reading-scaffold/blob/main/PRIVACY.md`)が使える |
+| 製品名 | **よみりん**(2026-10-08 決定。manifest・PRIVACY.md・各画面の見出しに反映済み) | — |
+| アイコン | `extension/icons/` に 16/32/48/128px(manifest の `icons` と `action.default_icon` に登録済み)。128px はストアの登録にも使う | — |
+| ストアの画像 | `docs/store/` に、小さいプロモーション タイル 440×280 と、ダッシュボードのスクリーンショット 1280×800 を2枚(見本データ) | Play ブックスで読んでいる最中のスクリーンショットを本物で撮って足す(本文が写るのでパブリックドメインの本で)。作り方は [store/tools/README.md](store/tools/README.md) |
+| プライバシーポリシー | PRIVACY.md の連絡先は GitHub Issues とストアの連絡先にした(メールを載せるなら足す) | 公開 URL は GitHub の `https://github.com/yukik8/yomirin/blob/main/PRIVACY.md`(push してから申請フォームに入れる) |
 | 規約の確認 | 2026-10-07 に方式B(本文を端末の外に出さない)に決めた | 法的な判断ではないので、専門家の確認を勧める(design.md §9) |
 | Vercel のプラン | Hobby | Hobby は個人・非商用向け。有料化・商用にするなら Pro を検討 |
 
@@ -58,10 +58,10 @@ cd server && vercel deploy --prod
 ### zip を作る
 
 ```bash
-cd extension && zip -r ../reading-scaffold-$(node -p "require('./manifest.json').version").zip manifest.json src -x '*.DS_Store'
+cd extension && zip -r ../yomirin-$(node -p "require('./manifest.json').version").zip manifest.json icons src -x '*.DS_Store'
 ```
 
-docs・server・.git は入れない。
+docs・server・.git は入れない(`*.zip` は .gitignore 済み)。2026-10-08 に `yomirin-0.24.0.zip` を作り、展開して Chrome に読み込んでサービスワーカー・3画面・アイコンが読めることを確かめた(未申請)。
 
 ### 出す前に確かめる
 
