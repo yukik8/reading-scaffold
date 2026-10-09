@@ -47,17 +47,20 @@ echo 'ANTHROPIC_API_KEY=sk-ant-...' > .env                             # 鍵は�
 
 ## Vercel にデプロイ
 
-Vercel のプロジェクト `reading-scaffold`(yukik8s-projects)に、`server/` から CLI で出す。
-Git 連携はしていないので、push しても自動ではデプロイされない。
+Vercel のプロジェクト `reading-scaffold`(yukik8s-projects)は、GitHub の `yukik8/yomirin` と繋がっている(2026-10-09〜)。
+
+- **main に push すると本番に出る。** ほかのブランチの push は確認用の Preview になる(保護つき。`vercel curl /healthz --deployment <URL>` で叩ける)
+- プロジェクトの Root Directory は `server`。`server/` の中が変わっていない push は、ビルドせずに飛ばす(Ignored Build Step: `git diff HEAD^ HEAD --quiet -- .`)。拡張だけの変更ではデプロイされない
+- 手で出すときは、**リポジトリの一番上で** CLI を使う(Root Directory が `server` なので、`server/` の中で出すと `server/server` を探して失敗する)。一番上でまだ `vercel link` していなければ、先に一度だけ
 
 ```bash
-cd server
-vercel deploy --prod      # 本番(https://reading-scaffold.vercel.app)
-vercel deploy             # 確認用の Preview(保護つき。`vercel curl /healthz --deployment <URL>` で叩ける)
+vercel link --project reading-scaffold   # 初回のみ(リポジトリの一番上で。.vercel/ はコミットされない)
+vercel deploy --prod                      # 本番(https://reading-scaffold.vercel.app)
+vercel deploy                             # 確認用の Preview
 ```
 
 - `vercel.json` の `"framework": "fastapi"` で、`main.py` の `app` が入口になる。
-- 環境変数(Production)。変えたら `vercel deploy --prod` で出し直すまで反映されない:
+- 環境変数(Production)。変えたら出し直す(push するか `vercel deploy --prod`)まで反映されない:
   - `ANTHROPIC_API_KEY`(必須。上の専用キー)
   - `RS_MODEL`(任意。既定 `claude-opus-5`)
   - `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN`(任意・推奨。Marketplace の Upstash を繋ぐと入る)

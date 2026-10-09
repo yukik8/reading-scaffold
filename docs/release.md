@@ -22,11 +22,7 @@
 
 - プロジェクト `reading-scaffold`(yukik8s-projects)。本番は `https://reading-scaffold.vercel.app`。拡張の `SERVER.base` と同じ
 - `ANTHROPIC_API_KEY`(Production)を登録し、本番でうんちくが返り、ログに単語が残らないことを確かめた
-- `server/` から CLI で出す(Git 連携なし。push しても自動ではデプロイされない)
-
-```bash
-cd server && vercel deploy --prod
-```
+- GitHub の `yukik8/yomirin` と繋いだ(2026-10-09)。**main に push すると本番に出る**(Root Directory は `server`、`server/` が変わっていない push は飛ばす)。手で出すときはリポジトリの一番上で `vercel deploy --prod`(詳しくは [../server/README.md](../server/README.md))
 
 残り:
 
@@ -133,6 +129,6 @@ zip を展開して「パッケージ化されていない拡張機能を読み�
 
 ## 4. 公開した後
 
-1. ストアの拡張 ID で `RS_ALLOWED_ORIGINS` を入れ、`vercel deploy --prod`
+1. ストアの拡張 ID で `RS_ALLOWED_ORIGINS` を入れ、出し直す(リポジトリの一番上で `vercel deploy --prod`)
 2. Vercel のログと Anthropic の利用額を、最初の数週はときどき見る
 3. 直すときは版を上げて zip を作り直し、ストアにアップロードする(審査がある)
