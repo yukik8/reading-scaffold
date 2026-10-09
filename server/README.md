@@ -39,7 +39,7 @@ ID が無いと 401、1日の上限を超えると 429。
 cd server
 python3 -m venv .venv && ./.venv/bin/pip install -r requirements.txt   # 初回のみ
 echo 'ANTHROPIC_API_KEY=sk-ant-...' > .env                             # 鍵はここに(初回のみ・コミットされない)
-./.venv/bin/uvicorn main:app --port 8787
+./.venv/bin/python -m uvicorn main:app --port 8787   # フォルダを移しても動く書き方(.venv/bin/uvicorn は作った場所の絶対パスを覚えている)
 ```
 
 開発中の拡張(パッケージ化されていないもの)は `http://127.0.0.1:8787` を呼ぶ。

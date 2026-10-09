@@ -22,6 +22,7 @@
 // 最後の記録の時点で閉じる。
 
 import { EventType, EndReason, SessionState } from '../shared/events.js';
+import { releaseNano } from './ai.js';
 import {
   SESSION,
   SUCCESS,
@@ -256,6 +257,7 @@ async function endSessionImpl(reason, { at = Date.now(), notify = true } = {}) {
   } finally {
     // 記録の書き込みが途中で失敗しても、セッションは必ず閉じる(次の開始・全消去を塞がない)
     await setCurrent(null);
+    releaseNano(); // 読み終えたら内蔵AIの土台の session を捨てる
   }
 }
 

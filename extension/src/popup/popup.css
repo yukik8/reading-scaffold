@@ -1,4 +1,4 @@
-/* ポップアップ: 絵本・水彩(docs/style.md)。土台は shared/paper.css、ここは配置だけ。
+/* ポップアップ: 静かな記録の画面。土台は shared/paper.css、ここは配置だけ。
    毎日触る小さな窓なので、カードは3枚まで・動きは入場だけ。 */
 
 body {
@@ -7,18 +7,14 @@ body {
 }
 
 main {
-  padding: 14px 18px 18px;
+  padding: 14px 16px 18px;
   display: grid;
-  gap: 26px;
+  gap: 14px;
 }
 
 /* グリッド子の min-width:auto が長い nowrap 文字列で幅を押し広げるのを防ぐ */
 main > * {
   min-width: 0;
-}
-
-.paper-head {
-  margin-bottom: -14px;
 }
 
 .paper-head .mascot {
@@ -33,6 +29,7 @@ main > * {
 #controls {
   display: grid;
   gap: 6px;
+  margin-bottom: 2px;
 }
 
 #controls .row {
@@ -43,48 +40,55 @@ main > * {
 }
 
 .btn.big {
-  font-size: 16px;
-  font-weight: 900;
-  letter-spacing: 0.1em;
-  padding: 9px 30px;
-  border-width: 3px;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  padding: 10px 32px;
+  background: var(--caramel-soft);
+  border-color: transparent;
+}
+
+.btn.big:hover {
+  background: #e5cbb3;
+}
+
+.btn.big:active {
+  background: #dfc1a6;
 }
 
 #status {
   margin: 0;
+  padding-left: 4px;
 }
 
 .note.err {
-  color: var(--coral-deep);
-  font-weight: 700;
+  color: var(--danger);
+  font-weight: 600;
 }
 
-/* カードはポップアップの幅に合わせて少し薄く */
+/* カードはポップアップの幅に合わせて少し詰める */
 .card {
-  padding: 26px 16px 16px;
-  box-shadow: 5px 6px 0 var(--shadow);
+  padding: 16px 18px;
 }
 
 .eyebrow {
-  left: 14px;
-  top: -15px;
+  margin-bottom: 10px;
   font-size: 12px;
-  padding: 4px 12px 3px;
 }
 
 /* 主張のカード(道具): 小さく、演出なし */
 .claim-label {
   display: block;
   font-size: 13px;
-  font-weight: 800;
-  margin-bottom: 6px;
+  font-weight: 600;
+  margin-bottom: 8px;
 }
 
 #claim .actions {
-  margin-top: 10px;
+  margin-top: 12px;
 }
 
-/* 週次グラフ: 補助なし=おひさま色、補助あり=淡い紙色(ダッシュボードと同じ) */
+/* 週次グラフ: 補助なし=くすみ青、補助あり=淡いくすみ青(ダッシュボードと同じ) */
 #chart {
   display: flex;
   align-items: flex-end;
@@ -106,31 +110,22 @@ main > * {
   height: 64px;
   display: flex;
   flex-direction: column-reverse;
-}
-
-#chart .unassisted,
-#chart .assisted {
-  border-radius: 8px 8px 4px 4px;
-  box-shadow: inset 0 0 0 2.5px var(--ink);
+  border-bottom: 1px solid var(--faint);
 }
 
 #chart .unassisted {
-  background: linear-gradient(180deg, var(--sun), var(--honey));
+  background: var(--dusty);
+  border-radius: 5px 5px 0 0;
 }
 
 #chart .assisted {
-  background: #f3e7d4;
-}
-
-#chart .assisted + .unassisted {
-  margin-bottom: -2.5px;
-  border-radius: 8px 8px 0 0;
+  background: var(--dusty-soft);
 }
 
 #chart .value,
 #chart .label {
   font-size: 10.5px;
-  font-weight: 700;
+  font-weight: 500;
   color: var(--muted);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
@@ -138,30 +133,32 @@ main > * {
 
 #chart .value {
   color: var(--ink);
-  font-weight: 900;
+  font-weight: 600;
 }
 
 #sub {
   display: grid;
   grid-template-columns: 1fr auto;
-  gap: 2px 12px;
-  margin: 12px 0 0;
+  gap: 4px 12px;
+  margin: 14px 0 0;
+  padding-top: 12px;
+  border-top: 1px solid var(--faint);
   font-size: 12.5px;
 }
 
 #sub dt {
   color: var(--muted);
-  font-weight: 700;
+  font-weight: 500;
 }
 
 #sub dd {
   margin: 0;
   text-align: right;
-  font-weight: 900;
+  font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
 
-/* ライブラリ: 破線の罫で区切る一覧 */
+/* ライブラリ: 髪の毛ほどの罫で区切る一覧 */
 #library {
   list-style: none;
   margin: 0;
@@ -172,7 +169,7 @@ main > * {
 
 #library li {
   padding: 8px 2px;
-  border-top: 2px dashed var(--faint);
+  border-top: 1px solid var(--faint);
   cursor: pointer;
   min-width: 0;
 }
@@ -183,14 +180,14 @@ main > * {
 }
 
 #library li:hover .lib-title {
-  color: var(--honey-deep);
+  color: var(--caramel-deep);
 }
 
 .lib-title {
   display: block;
   max-width: 100%;
   font-size: 13px;
-  font-weight: 800;
+  font-weight: 600;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -206,5 +203,5 @@ main > * {
 
 #open-dashboard {
   font-size: 12px;
-  padding: 5px 14px;
+  padding: 6px 14px;
 }

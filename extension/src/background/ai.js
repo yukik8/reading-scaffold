@@ -56,6 +56,66 @@ function kickDownload() {
   })();
 }
 
+// 指示(system)ごとの土台の session。指示を読み込ませたものを一度だけ作って取っておき、
+// 頼むたびに clone() する(毎回の create と、指示の読み込みを省く。2026-10-09 の実測で、
+// 約1000字の本文の問いが 3.7〜5.0 秒 → 約2.7 秒)。指示はクイズ・問い(2種)・うんちくの固定の4つだけ。
+// 読書セッションの終わりに releaseNano() で捨てる。SW が止まっても消えるので、次に要るとき作り直す。
+const bases = new Map();
+
+function baseSession(systemPrompt) {
+  let p = bases.get(systemPrompt);
+  if (!p) {
+    p = LanguageModel.create({
+      ...CREATE_OPTS,
+      initialPrompts: [{ role: 'system', content: systemPrompt }],
+    });
+    bases.set(systemPrompt, p);
+    p.catch(() => {
+      if (bases.get(systemPrompt) === p) bases.delete(systemPrompt); // 作れなかったら次にまた試す
+    });
+  }
+  return p;
+}
+
+function dropBase(systemPrompt) {
+  const p = bases.get(systemPrompt);
+  bases.delete(systemPrompt);
+  p?.then((s) => s.destroy()).catch(() => {});
+}
+
+/**
+ * 問いの欄を開いたときに、モデルを起こしておく(質問を打っている間に読み込ませる)。
+ * Chrome は少し使わないとモデルを外す。2026-10-09 の実測では、土台を取っておいても、
+ * 60秒あけると次の問いは 12 秒、3分あけると 19 秒かかった(続けてなら約3秒)。
+ * session を作るだけでは読み込まれない(38ms で返る)ので、短い文を読ませて起こす
+ * (冷えていればこれに約11秒かかり、直後の問いは約3秒で返った)。
+ */
+export async function wakeNano() {
+  if ((await nanoAvailability()) !== 'available') return;
+  baseSession(ANSWER_SYSTEM).catch(() => {});
+  const s = await cloneOf(JUDGED_ANSWER_SYSTEM);
+  try {
+    await withTimeout(s.append('はい'));
+  } finally {
+    s.destroy();
+  }
+}
+
+/** 取っておいた土台を捨てる(読書セッションの終わり)。 */
+export function releaseNano() {
+  for (const key of [...bases.keys()]) dropBase(key);
+}
+
+async function cloneOf(systemPrompt) {
+  try {
+    return await withTimeout((await withTimeout(baseSession(systemPrompt))).clone());
+  } catch {
+    // 土台が使えなくなっていた。作り直して1回だけやり直す
+    dropBase(systemPrompt);
+    return withTimeout((await withTimeout(baseSession(systemPrompt))).clone());
+  }
+}
+
 async function promptJson(systemPrompt, userPrompt, schema) {
   const availability = await nanoAvailability();
   if (availability === 'no-api' || availability === 'unavailable') return null;
@@ -66,10 +126,8 @@ async function promptJson(systemPrompt, userPrompt, schema) {
   }
   let session = null;
   try {
-    session = await withTimeout(LanguageModel.create(CREATE_OPTS));
-    const raw = await withTimeout(
-      session.prompt(`${systemPrompt}\n\n${userPrompt}`, { responseConstraint: schema }),
-    );
+    session = await cloneOf(systemPrompt);
+    const raw = await withTimeout(session.prompt(userPrompt, { responseConstraint: schema }));
     return JSON.parse(raw);
   } catch {
     return null;
@@ -82,11 +140,11 @@ async function promptJson(systemPrompt, userPrompt, schema) {
   }
 }
 
-/**
- * 診断: 実機で内蔵AIがどの状態か。ダッシュボードのdev欄から呼ぶ(ページ文脈で
- * 実行するとユーザージェスチャーが保たれ、DL起動が確実になる)。
- * create()も試み、進捗・エラーメッセージまで返す。
- */
+/** 診断で内蔵AIが実際に答えを返せたか(準備ができた)。 */
+export function nanoReady(d) {
+  return Boolean(d.created && d.sample);
+}
+
 /**
  * 診断の結果を、本人に見せる一文にする(ダッシュボードとオンボーディングで同じ言葉を使う)。
  * 2026-10-08 に分かったこと: 'unavailable' のいちばん多い原因は空きディスク不足(22GB 未満)で、
@@ -106,7 +164,7 @@ export function describeNano(d) {
       'それでも使えなければ、対応するGPUかメモリが足りない端末です。くまのうんちくは「言葉を調べるサーバ」をオンにすると出ます。'
     );
   }
-  if (d.created && d.sample) {
+  if (nanoReady(d)) {
     return '内蔵AIの準備ができました。クイズと問いへの答えは、この端末の中で作られます。';
   }
   if (/space|disk|storage/i.test(d.createError ?? '')) {
@@ -125,6 +183,11 @@ export function describeNano(d) {
   );
 }
 
+/**
+ * 診断: 実機で内蔵AIがどの状態か。ダッシュボードのdev欄から呼ぶ(ページ文脈で
+ * 実行するとユーザージェスチャーが保たれ、DL起動が確実になる)。
+ * create()も試み、進捗・エラーメッセージまで返す。
+ */
 export async function nanoDiagnostics() {
   const out = { hasApi: typeof LanguageModel !== 'undefined' };
   if (!out.hasApi) return out;
@@ -177,18 +240,19 @@ const QUIZ_SCHEMA = {
   additionalProperties: false,
 };
 
+const QUIZ_SYSTEM =
+  'あなたは読解クイズの出題者。渡された段落の内容だけから、理解を確かめる3択クイズを1問作る。' +
+  '本文と同じ言語で出題する。解説・褒め言葉・アドバイスは一切書かない。';
+
 /**
  * 段落から3択クイズを1問。生成できなければnull(呼び手は何も出さない)。
  * 言葉の原則: 出題のみ。解説・褒め・アドバイスは書かせない。
  */
 export async function nanoQuiz(paragraphText, focusText = '') {
-  const sys =
-    'あなたは読解クイズの出題者。渡された段落の内容だけから、理解を確かめる3択クイズを1問作る。' +
-    '本文と同じ言語で出題する。解説・褒め言葉・アドバイスは一切書かない。';
   // 焦点(ページで最も難しい段落)があれば、そこの理解を確かめる問いにする
   const focus = focusText && paragraphText.includes(focusText) ? `\n特に次の箇所の理解を確かめる問いにする:\n${focusText}\n` : '';
   const user = `次の段落から3択クイズを1問。正解は段落を読んでいれば分かるものにする。${focus}\n---\n${paragraphText}`;
-  return acceptQuiz(await promptJson(sys, user, QUIZ_SCHEMA));
+  return acceptQuiz(await promptJson(QUIZ_SYSTEM, user, QUIZ_SCHEMA));
 }
 
 /** クイズの形を確かめて整える(問題文・選択肢3つ・正解の添字 0〜2)。合わなければ null。 */
@@ -206,28 +270,95 @@ export function acceptQuiz(out) {
   };
 }
 
+const ANSWER_PROPS = {
+  answer: { type: 'string' },
+  source_index: { type: 'integer' },
+};
 const ANSWER_SCHEMA = {
   type: 'object',
-  properties: {
-    answer: { type: 'string' },
-    source_index: { type: 'integer' },
-  },
+  properties: ANSWER_PROPS,
   required: ['answer', 'source_index'],
   additionalProperties: false,
 };
+const JUDGED_ANSWER_SCHEMA = {
+  type: 'object',
+  properties: { unrelated: { type: 'boolean' }, ...ANSWER_PROPS },
+  required: ['unrelated', 'answer', 'source_index'],
+  additionalProperties: false,
+};
+
+const ANSWER_RULES =
+  '必ず2〜3文で短く答える。本文の要約や先の内容の紹介はしない。' +
+  '根拠が渡された段落にあれば、その番号をsource_indexで返す(なければ-1)。本文と同じ言語で答える。';
+
+/** 本についての問いだと分かっているとき(本文と言葉が重なる・本文を選んで問うた)の指示。 */
+export const ANSWER_SYSTEM = '読書中の質問に答えるアシスタント。' + ANSWER_RULES;
+
+/**
+ * 本についての問いか分からないときの指示。2026-10-09: 「Pythonで累積和を出すコード」にも答えていたので、
+ * 本と関係のない頼みごとは unrelated=true で断らせる。判定は答えと同じ1回の呼び出しの中で先に決めさせる。
+ * 実測(自作の短編・問い26): 「本についてか(on_topic)」と聞くより「関係のない頼みごとか」と聞くほうが、
+ * また質問を本文より後ろに置くほうが、よく断れた(関係のない頼み 6/6 を2回とも・約0.9秒で断る)。
+ * ただし「『槌』の読み方は?」「仲買人って何?」のような言葉の問いまで断るので、そうした問いは
+ * sharesTermWith で先に拾い、この判定には回さない。
+ */
+export const JUDGED_ANSWER_SYSTEM =
+  '読書中の問いに答えるアシスタント。' +
+  'まず unrelated を決める。問いが、いま読んでいる本の内容と関係のない頼みごとなら true: ' +
+  'プログラミングやコード、計算、翻訳、作文、レポートの書き方、相談、雑談、天気や店などのほかの調べもの(本文にその題材が出てこないとき)。' +
+  '本文の言葉の意味や読み、出てくる人物・物・場所・出来事・考え、時代や背景、書き手の意図についての問いなら false。' +
+  'unrelated が true のときは answer を空文字、source_index を -1 にする。' +
+  'false のときは' +
+  ANSWER_RULES;
+
+// 問いや頼みごとによく出るが、本との関わりの手がかりにならない漢字の言葉
+// (「宿題を手伝って」が本文の「手伝っていた」に当たらないように、頼む言葉も入れる)
+const QUESTION_WORDS = new Set(
+  (
+    '意味 理由 作者 筆者 著者 本文 内容 説明 場面 気持 文章 言葉 仕組 関係 本当 最後 結末 何歳 何時 何故 一体 今日 明日 昨日 ' +
+    '手伝 作成 翻訳 計算 相談 紹介 解説 要約 添削 確認 方法 簡単 具体 詳細 例文'
+  ).split(' '),
+);
+
+/**
+ * 問いが本文と言葉を共有するか(すれば本についての問いとみなし、関係の判定に回さない)。
+ * 手がかり: 「」で括った言葉・漢字の2字の並び・2字以上のカタカナ語・3字以上の英単語。
+ * 漢字は2字ずつ見る(「仲買人」でも「仲買い人」に当たり、「汽車旅」でも「汽車」に当たる)。
+ */
+export function sharesTermWith(question, text) {
+  const q = String(question ?? '');
+  const src = String(text ?? '');
+  if (!src) return false;
+  const terms = [...q.matchAll(/「([^」]{1,20})」/g)].map((m) => m[1]);
+  for (const run of q.match(/[\u4e00-\u9fff々〆]{2,}/g) ?? []) {
+    if (QUESTION_WORDS.has(run)) continue;
+    for (let i = 0; i + 2 <= run.length; i += 1) {
+      const pair = run.slice(i, i + 2);
+      if (!QUESTION_WORDS.has(pair)) terms.push(pair);
+    }
+  }
+  terms.push(...(q.match(/[\u30a1-\u30faー]{2,}/g) ?? []));
+  const lower = src.toLowerCase();
+  if ((q.match(/[A-Za-z]{3,}/g) ?? []).some((w) => lower.includes(w.toLowerCase()))) return true;
+  return terms.some((t) => src.includes(t));
+}
 
 /**
  * 読書中の質問への短い回答。「照らす、答えない」:
  * 2〜3文まで・先回りの要約をしない・根拠段落の番号を返させて光で指す。
  * context = [{ i, text }](読了済み段落のみ。未読は渡さない=ネタバレ禁止は呼び手が守る)
+ * 本と関係のない問いは { off_topic: true }(答えない)。作れなければ null。
  */
 export async function nanoAnswer({ question, selection, context }) {
-  const sys =
-    '読書中の質問に答えるアシスタント。必ず2〜3文で短く答える。本文の要約や先の内容の紹介はしない。' +
-    '根拠が渡された段落にあれば、その番号をsource_indexで返す(なければ-1)。本文と同じ言語で答える。';
   const ctx = context.map((c) => `[${c.i}] ${c.text}`).join('\n\n');
-  const user = `${selection ? `読者が選択している本文: ${selection}\n\n` : ''}質問: ${question}\n\n読了済みの段落:\n${ctx}`;
-  const out = await promptJson(sys, user, ANSWER_SCHEMA);
+  // 本文を選んで問うた・本文と言葉が重なる問いは、本についての問い。判定させずに答える
+  const known = Boolean(selection?.trim()) || sharesTermWith(question, ctx);
+  // 本文を先・質問を後に置く(同じページで続けて問うと、本文の読み込みが使い回されて速い)
+  const user = `読了済みの段落:\n${ctx}\n\n${selection ? `読者が選択している本文: ${selection}\n\n` : ''}質問: ${question}`;
+  const out = known
+    ? await promptJson(ANSWER_SYSTEM, user, ANSWER_SCHEMA)
+    : await promptJson(JUDGED_ANSWER_SYSTEM, user, JUDGED_ANSWER_SCHEMA);
+  if (out?.unrelated === true) return { off_topic: true };
   if (!out || typeof out.answer !== 'string' || !out.answer.trim()) return null;
   return {
     answer: out.answer.trim(),

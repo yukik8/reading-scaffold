@@ -4,8 +4,8 @@
 
 import { Msg } from '../shared/events.js';
 import { GOALS, DIAGNOSIS, writeServerConsent } from '../shared/config.js';
-import { nanoDiagnostics, describeNano } from '../background/ai.js';
-import { bearSVG } from '../content/bear.js';
+import { nanoDiagnostics, describeNano, nanoReady } from '../background/ai.js';
+import { showBear } from '../content/bear.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -29,12 +29,14 @@ const QUESTIONS = [
   },
 ];
 
-// 案内役のくま(docs/style.md §6)
-$('mascot').innerHTML = bearSVG('peek');
+// 案内役のくま(docs/style.md §6)。段ごとに絵が替わる: はじめ=正面 / 診断=考えながら読む /
+// 目標=なにそれ? / おわり=読む
+const STEP_BEAR = { 'step-intro': 'front', 'step-quiz': 'think-read', 'step-goal': 'what', 'step-done': 'read' };
 
 const answers = [];
 let currentQ = 0;
 let selectedGoal = null;
+let nanoIsReady = false; // 内蔵AIの確認が通ったら、最後のボタンはダッシュボードへ
 
 /** 選択肢をキーボードでも選べるようにする(Tab で移動、Enter / Space で選ぶ)。 */
 function pressable(li, onPress) {
@@ -53,6 +55,7 @@ function show(stepId) {
   for (const id of ['step-intro', 'step-quiz', 'step-goal', 'step-done']) {
     $(id).hidden = id !== stepId;
   }
+  showBear($('mascot'), STEP_BEAR[stepId]);
   // 一枚ずつ出すので、切り替えのたびに入場の動きをやり直す
   const el = $(stepId);
   el.style.animation = 'none';
@@ -166,11 +169,19 @@ $('ai-check').addEventListener('click', async () => {
   $('ai-status').textContent = '確認中…(初回はモデルのダウンロードに数分かかることがあります)';
   const d = await nanoDiagnostics();
   $('ai-status').textContent = describeNano(d);
-  $('ai-check').disabled = false;
+  if (nanoReady(d)) {
+    // 準備ができたら、もう試し直すことはない。最後のボタンを「はじめる」にしてダッシュボードへ
+    $('ai-check').closest('.actions').hidden = true;
+    $('close').textContent = 'はじめる';
+    nanoIsReady = true;
+  } else {
+    $('ai-check').disabled = false;
+  }
 });
 
 $('close').addEventListener('click', () => {
-  window.close();
+  if (nanoIsReady) location.replace(chrome.runtime.getURL('src/dashboard/dashboard.html'));
+  else window.close();
 });
 
 show('step-intro');

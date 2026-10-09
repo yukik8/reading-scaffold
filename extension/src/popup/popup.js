@@ -1,7 +1,7 @@
 import { Msg } from '../shared/events.js';
 import { getPage } from '../background/store.js';
 import { addClaim } from '../background/memory.js';
-import { bearSVG } from '../content/bear.js';
+import { bearImg, showBear } from '../content/bear.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -9,8 +9,11 @@ function send(type, extra = {}) {
   return chrome.runtime.sendMessage({ type, ...extra });
 }
 
-// 案内役のくま(docs/style.md §6)。本から顔を出すだけ。育たない・要求しない
-$('mascot').innerHTML = bearSVG('peek');
+// 案内役のくま(docs/style.md §6)。状態で絵が替わるだけで、動かない・育たない・要求しない:
+// はじめ=正面 / ふだん=読む / 計測中=集中中 / 終えた直後=本の上で寝る / 記録がまだ無い=箱の中
+const mascot = (pose) => showBear($('mascot'), pose);
+mascot('read');
+$('empty').insertAdjacentHTML('afterbegin', bearImg('box', 'empty-bear'));
 
 function showError(message) {
   $('error').textContent = message;
@@ -52,6 +55,7 @@ async function showClaimCard(ended) {
   $('mirror').hidden = true;
   $('library-sec').hidden = true;
   $('claim').hidden = false;
+  mascot('sleep-book');
   $('claim-text').focus();
 }
 
@@ -153,6 +157,7 @@ async function render() {
   // (進行中セッションがある場合は例外 — 終了ボタンを奪わない)
   const onboarded = Boolean(status?.state?.onboarded_at);
   if (!onboarded && !status?.session) {
+    mascot('front');
     $('onboard').hidden = false;
     $('controls').hidden = true;
     $('mirror').hidden = true;
@@ -160,6 +165,7 @@ async function render() {
   }
 
   const session = status?.session ?? null;
+  mascot(session ? 'focus' : 'read');
   $('start').hidden = Boolean(session);
   $('end').hidden = !session;
   $('status').hidden = !session;

@@ -1,0 +1,167 @@
+<!doctype html>
+<!--
+  読書中の演出の試写室。拡張を入れずに、くまの動き(顔を出す・うんちく・クイズ正解・読了)を θ ごとに見る。
+
+    python3 -m http.server 8000      (リポジトリの一番上で)
+    → http://localhost:8000/tools/preview/
+
+  ES モジュールなので file:// では開けない。動きを減らす設定は DevTools の Rendering →
+  「Emulate CSS media feature prefers-reduced-motion」で試す。
+-->
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>よみりん 演出の試写室</title>
+    <style>
+      :root {
+        --bg: #f6f0e6;
+        --paper: #fdfaf3;
+        --ink: #4f3a2c;
+        --muted: rgba(79, 58, 44, 0.58);
+        --faint: rgba(79, 58, 44, 0.12);
+        font-family: 'Hiragino Maru Gothic ProN', 'Zen Maru Gothic', 'M PLUS Rounded 1c', sans-serif;
+        color: var(--ink);
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        min-height: 100vh;
+      }
+      .book {
+        max-width: 640px;
+        margin: 0 auto;
+        padding: 72px 40px 140px;
+        background: #fffdf8;
+        min-height: 100vh;
+        box-sizing: border-box;
+        font-family: 'Hiragino Mincho ProN', 'Yu Mincho', serif;
+        font-size: 18px;
+        line-height: 2;
+        box-shadow: 0 0 40px rgba(79, 58, 44, 0.08);
+      }
+      .book p {
+        margin: 0 0 1em;
+        text-indent: 1em;
+      }
+      .panel {
+        position: fixed;
+        left: 16px;
+        top: 16px;
+        width: 220px;
+        background: var(--paper);
+        border: 1px solid var(--faint);
+        border-radius: 16px;
+        box-shadow: 0 6px 18px rgba(79, 58, 44, 0.08);
+        padding: 14px 16px 16px;
+        font-size: 13px;
+      }
+      .panel h1 {
+        margin: 0 0 10px;
+        font-size: 14px;
+        font-weight: 700;
+      }
+      .panel label {
+        display: block;
+        color: var(--muted);
+        margin: 10px 0 4px;
+      }
+      .theta {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .theta input {
+        flex: 1;
+        min-width: 0;
+        accent-color: #c58a5c;
+      }
+      .theta output {
+        width: 2.6em;
+        text-align: right;
+        font-variant-numeric: tabular-nums;
+        font-weight: 700;
+      }
+      .tier {
+        color: var(--muted);
+        font-size: 12px;
+        margin-top: 2px;
+      }
+      .buttons {
+        display: grid;
+        gap: 6px;
+        margin-top: 12px;
+      }
+      button {
+        font: inherit;
+        color: var(--ink);
+        background: #f3e8dc;
+        border: 1px solid var(--faint);
+        border-radius: 999px;
+        padding: 7px 12px;
+        cursor: pointer;
+      }
+      select {
+        font: inherit;
+        color: var(--ink);
+        background: var(--paper);
+        border: 1px solid var(--faint);
+        border-radius: 12px;
+        padding: 6px 8px;
+      }
+      button:hover {
+        background: #ecd7c3;
+      }
+      .hint {
+        color: var(--muted);
+        font-size: 11px;
+        line-height: 1.6;
+        margin: 10px 0 0;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="book" id="book">
+      <p>ゴーシュは町の活動写真館でセロを弾く係りでした。けれどもあんまり上手でないという評判でした。上手でないどころではなく実は仲間の楽手のなかではいちばん下手でしたから、いつでも楽長にいじめられるのでした。</p>
+      <p>ひるすぎみんなは楽屋に円くならんで今度の町の音楽会へ出す第六交響曲の練習をしていました。トランペットは一生けん命歌っています。ヴァイオリンも二いろ風のように鳴っています。</p>
+      <p>クラリネットもボーボーとそれに手伝っています。ゴーシュも口をりんと結んで眼を皿のようにして楽譜を見つめながらもう一心に弾いています。</p>
+      <p>にわかにぱたっと楽長が両手を鳴らしました。みんなぴたりと曲をやめてしんとしました。楽長がどなりました。「セロがおくれた。トォテテ　テテテイ、ここからやり直し。はいっ。」</p>
+      <p>みんなは今の所の少し前の所からやり直しました。ゴーシュは顔をまっ赤にして額に汗を出しながらやっといま云われたところを通りました。ほっと安心しながら、つづけて弾いていますと楽長がまた手をぱっと拍ちました。</p>
+      <p>その晩遅くゴーシュは何か巨きな黒いものをしょってじぶんの家へ帰ってきました。家といってもそれは町はずれの川ばたにあるこわれた水車小屋で、ゴーシュはそこにたった一人ですんでいて、午前は小屋のまわりの小さな畑でトマトの枝をきったり甘藍の虫をひろったりしてひるすぎになるといつも出て行っていたのです。</p>
+    </main>
+
+    <aside class="panel">
+      <h1>演出の試写室</h1>
+      <label for="theta">θ(補助の量)</label>
+      <div class="theta">
+        <input id="theta" type="range" min="0" max="8" step="0.1" value="8" />
+        <output id="theta-out">8.0</output>
+      </div>
+      <div class="tier" id="tier"></div>
+      <label for="freeze">コマ止め(押してから何ミリ秒で止めるか・空なら止めない)</label>
+      <div class="theta">
+        <input id="freeze" type="number" min="0" step="50" placeholder="例: 500" />
+        <button id="thaw" type="button">解除</button>
+      </div>
+      <div class="buttons">
+        <button id="peek" type="button">くまが顔を出す(ふつう)</button>
+        <button id="peek-rare" type="button">くまが顔を出す(レア)</button>
+        <button id="peek-epic" type="button">くまが顔を出す(激レア)</button>
+        <button id="herald" type="button">激レアの先触れ(シルエット)</button>
+        <button id="trivia" type="button">うんちく</button>
+        <button id="quiz" type="button">クイズ(正解を押すとフィーバー)</button>
+        <select id="variant" aria-label="大当たりの出し方">
+          <option value="">大当たりの出し方: おまかせ</option>
+          <option value="launch">大当たり: 打ち上げ(虹に乗る)</option>
+          <option value="tornado">大当たり: つむじ風</option>
+        </select>
+        <button id="finale" type="button">読了フィナーレ(打ち上げ)</button>
+        <button id="tornado" type="button">読了フィナーレ(つむじ風)</button>
+        <button id="shower" type="button">めくった瞬間の花びら</button>
+      </div>
+      <p class="hint">θ が 6.4 以上で打ち上げ(クイズは半分の確率でつむじ風)、4.4 以上で大ジャンプ、2.8 以上でぴょんぴょん、それ未満は寝そべって読むだけ。θ=0 では何も出ません。コマ止めで止まった画面は、どこかを押すと解除されます。</p>
+    </aside>
+
+    <script type="module" src="./preview.js"></script>
+  </body>
+</html>

@@ -5,7 +5,7 @@
 
 import { Msg, EventType, SessionState } from '../shared/events.js';
 import { GOALS, DIAGNOSIS, SERVER, IS_STORE_BUILD, readServerConsent } from '../shared/config.js';
-import { nanoQuiz, nanoAnswer, nanoTrivia, pickTerms, acceptQuiz } from './ai.js';
+import { nanoQuiz, nanoAnswer, nanoTrivia, pickTerms, acceptQuiz, wakeNano } from './ai.js';
 import { serverTrivia, resetInstallId } from './server.js';
 import {
   startSession,
@@ -233,6 +233,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         break;
       }
 
+      case Msg.ASK_OPEN: {
+        // 問いの欄が開いた。打っている間にモデルを読み込ませる(待たずに返す)
+        if (await sessionOf(sender)) wakeNano().catch(() => {});
+        sendResponse({ ok: true });
+        break;
+      }
+
       case Msg.ASK_REQUEST: {
         // 自分からの問い(道具カテゴリ・1問1答)。Nanoのみ — 本文と質問を外に出さない。
         // 回答に演出はつけない(質問をレバーにしない)。制御器にも一切入れない。
@@ -255,6 +262,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         const res = await nanoAnswer({ question, selection, context });
         if (!res) {
           sendResponse({ ok: false, error: 'unavailable' });
+          break;
+        }
+        if (res.off_topic) {
+          // 本と関係のない頼みごと(コードを書いて等)には答えない。問いの記録にも復習にも入れない
+          sendResponse({ ok: false, error: 'off-topic' });
           break;
         }
         // 計測層には文字数だけ(層の分離: 文面は記録層のquestionsにのみ置く)

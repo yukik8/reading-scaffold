@@ -11,7 +11,7 @@ const PAD = 8; // 本文の枠からこれだけ離す
 const MIN_BAND = 26; // これより細い余白の帯は使わない
 const GOLD = ['#ffd23f', '#ffb347', '#ffe17a'];
 
-export function createMargin(Paint) {
+export function createMargin(Paint, { bearURL } = {}) {
   const host = document.createElement('div');
   host.style.cssText = 'all: initial; position: fixed; inset: 0; z-index: 2147483645; pointer-events: none;';
   const root = host.attachShadow({ mode: 'open' });
@@ -139,6 +139,37 @@ export function createMargin(Paint) {
           kick();
         }, 900);
       }
+      kick();
+    },
+
+    /**
+     * 激レアの先触れ: くまのシルエットが余白にふっと現れて、虹の星をまとって消える(約2.4秒・1回だけ)。
+     * 余白の帯が細くてシルエットが入らなければ出さない(星の色替わりだけで予告する)。
+     */
+    herald() {
+      const s = spot();
+      const b = s.band;
+      if (!b || !bearURL) return;
+      const size = Math.min(72, b.x1 - b.x0 - 12, b.y1 - b.y0 - 12);
+      if (size < 40) return;
+      const x = Math.min(Math.max(s.x, b.x0 + size / 2), b.x1 - size / 2);
+      const y = Math.min(Math.max(s.y, b.y0 + size / 2), b.y1 - size / 2);
+      const img = document.createElement('img');
+      img.src = bearURL(['sil-front', 'sil-sit', 'sil-lie'][Math.floor(Math.random() * 3)]);
+      img.alt = '';
+      img.style.cssText = `position:fixed; left:${x - size / 2}px; top:${y - size / 2}px; width:${size}px; height:auto; opacity:0; pointer-events:none;`;
+      root.append(img);
+      img.animate(
+        [
+          { opacity: 0, transform: 'translateY(6px)' },
+          { opacity: 0.5, transform: 'none', offset: 0.3 },
+          { opacity: 0.5, offset: 0.7 },
+          { opacity: 0 },
+        ],
+        { duration: paint.reduced ? 1_200 : 2_400, easing: 'ease-in-out' },
+      ).onfinish = () => img.remove();
+      paint.motion = 1;
+      paint.twinkle(x, y, { count: 4, stars: 'rainbow', radius: size * 0.7 });
       kick();
     },
 

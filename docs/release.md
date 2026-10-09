@@ -58,7 +58,7 @@ cd server && vercel deploy --prod
 ### zip を作る
 
 ```bash
-cd extension && zip -r ../yomirin-$(node -p "require('./manifest.json').version").zip manifest.json icons src -x '*.DS_Store'
+cd extension && zip -r ../yomirin-$(node -p "require('./manifest.json').version").zip manifest.json icons assets src -x '*.DS_Store'
 ```
 
 docs・server・.git は入れない(`*.zip` は .gitignore 済み)。2026-10-08 に `yomirin-0.24.0.zip` を作り、展開して Chrome に読み込んでサービスワーカー・3画面・アイコンが読めることを確かめた(未申請)。

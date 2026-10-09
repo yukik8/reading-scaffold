@@ -13,7 +13,7 @@ import {
   readServerConsent,
   writeServerConsent,
 } from '../shared/config.js';
-import { bearSVG } from '../content/bear.js';
+import { bearImg, showBear } from '../content/bear.js';
 import { buildMirror } from '../background/mirror.js';
 import { buildKpi } from '../background/kpi.js';
 import { nanoDiagnostics, describeNano } from '../background/ai.js';
@@ -64,14 +64,24 @@ function independence(theta) {
   return Math.min(1, Math.max(0, 1 - theta / THETA_MAX));
 }
 
-// 色は演出と同じ水彩の色。edge は帯の内側の光(黒帯だけ金の縁)
-function rankFor(theta) {
-  if (theta === 0) return { name: '黒', color: '#4a2f24', edge: '#ffd23f' };
+// ヘッダのくまは、補助の量で居場所が変わる(状態を示すだけ。動きもご褒美もない):
+// 隣で一緒に読む → 自分の本を読む → 背を向ける → 卒業したら本だけが残る
+function mascotFor(theta) {
+  if (theta === 0) return 'book';
   const i = independence(theta);
-  if (i < 0.25) return { name: '白', color: '#fffaf0', edge: 'rgba(255,255,255,0.7)' };
-  if (i < 0.5) return { name: '黄', color: '#ffd23f', edge: 'rgba(255,255,255,0.55)' };
-  if (i < 0.75) return { name: '緑', color: '#4cc9a3', edge: 'rgba(255,255,255,0.45)' };
-  return { name: '茶', color: '#c8864a', edge: 'rgba(255,255,255,0.4)' };
+  if (i < 1 / 3) return 'read';
+  if (i < 2 / 3) return 'read-side';
+  return 'turn';
+}
+
+// 記録の画面なので、くすんだ色で塗る(金・虹はフィーバーの合図なので使わない)
+function rankFor(theta) {
+  if (theta === 0) return { name: '黒', color: '#4f3a2c' };
+  const i = independence(theta);
+  if (i < 0.25) return { name: '白', color: '#fbf6ec' };
+  if (i < 0.5) return { name: '黄', color: '#e9d08f' };
+  if (i < 0.75) return { name: '緑', color: '#a9bf9c' };
+  return { name: '茶', color: '#b98257' };
 }
 
 /** 帯セクションの表示をθから更新する(スライダー含む)。 */
@@ -81,8 +91,8 @@ function renderTheta(theta) {
   const rank = rankFor(theta);
   const belt = $('belt');
   belt.style.background = rank.color;
-  belt.style.boxShadow = `inset 0 0 0 2px ${rank.edge}`;
   belt.title = `帯: ${rank.name}`;
+  showBear($('mascot'), mascotFor(theta));
   $('indep-pct').textContent = `${Math.round(independence(theta) * 100)}%`;
   $('obi-ring').style.left = `${(theta / THETA_MAX) * 100}%`;
 }
@@ -114,7 +124,7 @@ $('goal').addEventListener('change', async () => {
 });
 
 /**
- * 達成率(棒・左軸0〜100%)とθ(オレンジの線・右軸8〜0)の二軸グラフ。
+ * 達成率(棒・左軸0〜100%)とθ(茶色の線・右軸8〜0)の二軸グラフ。
  * 「棒が高いままで線が下がる」= 補助に依存せず読めている、が読み取りたい形。
  * 責めない: 未達の棒も色を変えない・警告を出さない。
  */
@@ -810,8 +820,8 @@ function drawWeekLine(week) {
   }
 }
 
-// ヘッダのくま(読書中に顔を出すのと同じ子)。飾りなので一度描くだけ
-$('mascot').innerHTML = bearSVG('peek');
+// ヘッダのくまは renderTheta が θ に合わせて置く。本がまだ無い本棚には、箱に入ったくま
+$('shelf-empty').insertAdjacentHTML('afterbegin', bearImg('box', 'empty-bear'));
 
 async function render() {
   $('ver').textContent = `v${chrome.runtime.getManifest?.().version ?? '?'}`;

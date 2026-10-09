@@ -33,7 +33,7 @@ const { difficultyOf, weightedSample } = await mod('src/content/difficulty.js');
 const { createOverlay, setTextColumn, setDemoTheta, setDemoEnabled } =
   await mod('src/content/overlay.js');
 const { Paint, clearSprites } = await mod('src/content/paint.js');
-const { bearSVG } = await mod('src/content/bear.js');
+const { bearImg, bearURL } = await mod('src/content/bear.js');
 const { createStage } = await mod('src/content/stage.js');
 const { createMargin } = await mod('src/content/margin.js');
 const { createPageCurl } = await mod('src/content/pagecurl.js');
@@ -481,7 +481,7 @@ const overlayStartedAt = Date.now();
 // ---- 余白の演出(Play ブックス) --------------------------------------------
 // 普段の小さな演出(地のきらきら・ヒント・金/虹のレア)は、本文の枠の外にだけ描く。
 if (PLAY_BOOKS && mode === 'full') {
-  margin = createMargin(Paint);
+  margin = createMargin(Paint, { bearURL });
   updateTextColumn();
 }
 
@@ -491,14 +491,21 @@ if (PLAY_BOOKS && mode === 'full') {
 // θ配下に置かない(漸減しない)・回答に演出をつけない・1問1答。
 // 文脈は読了済み段落のみ(未読は渡さない=ネタバレ禁止)。制御器には一切入れない。
 
+const ASK_CONTEXT_CHARS = 1500; // 問いに添える本文の字数の上限(文庫で2〜3ページ)
+
 if (mode === 'full') {
   overlay.mountAsk(async (question) => {
     markInteraction(); // 問うことは読書中の活動。セッションを放置終了させない
     const selection = String(getSelection() ?? '').slice(0, 500);
+    // いま読んでいるところから遡って、合わせて ASK_CONTEXT_CHARS 字まで。Nano は読ませる量で遅くなる
+    // (2026-10-09 の実測: 約1000字で約2.7秒、約4800字で約6.5秒)
     const end = Math.min(maxDepthIdx, paragraphs.length - 1);
     const context = [];
-    for (let i = Math.max(0, end - 5); i <= end; i += 1) {
-      context.push({ i, text: textOf(paragraphs[i]).slice(0, 800) });
+    let budget = ASK_CONTEXT_CHARS;
+    for (let i = end; i >= Math.max(0, end - 5) && budget > 0; i -= 1) {
+      const text = textOf(paragraphs[i]).slice(0, Math.min(800, budget));
+      context.unshift({ i, text });
+      budget -= text.length;
     }
     let res = null;
     try {
@@ -511,6 +518,7 @@ if (mode === 'full') {
         unavailable: 'この端末では内蔵AI(Gemini Nano)が使えないため、答えられませんでした',
         'no-session': '計測セッションが見つかりませんでした',
         empty: '質問が空です',
+        'off-topic': 'この本についての問いに答えます',
       };
       overlay.showNotice(known[res?.error] ?? `回答できませんでした(${res?.error ?? 'no-response'})`, 4_000);
       return null;
@@ -520,7 +528,14 @@ if (mode === 'full') {
       Number.isInteger(src) && src >= 0 && paragraphs[src]?.isConnected ? paragraphs[src] : null;
     overlay.showAnswer(res.answer, { sourceEl });
     return res;
-  }, markInteraction);
+  }, markInteraction, () => {
+    // 欄を開いたら、打っている間に内蔵AIを起こしておく(冷えていると読み込みに20秒前後かかる)
+    try {
+      chrome.runtime.sendMessage({ type: Msg.ASK_OPEN }).catch(() => {});
+    } catch {
+      /* 拡張のリロード等でコンテキストが消えた場合 */
+    }
+  });
 }
 const HINT_GRACE_MS = 8_000; // 開いた瞬間に光らせない+開始通知と重ねない
 // ヒントどうしの最小間隔(Play ブックスのみ)。ページ送りの本では1ページ分の段落が一度に
@@ -874,7 +889,7 @@ const demoQuizTimer = QUIZ.enabled
 // 顔を出すだけなら、ページの半分近くを読み過ぎた頃に。抽選と頻度(θ配下)は変えない。
 
 const EVENTS_ON = PLAY_BOOKS && PAGE_EVENTS.enabled;
-const stage = createStage({ Paint, bearSVG });
+const stage = createStage({ Paint, bearImg });
 const stock = { quiz: null, trivia: null };
 const inFlight = { quiz: false, trivia: false };
 // 作れなかった後は数ページ空けてから作りに行く(Nano 不在・話せることが無いのに毎ページ頼まない)
@@ -1125,7 +1140,11 @@ function noteStimulus(hintId, kind, timing = 'turn') {
 
 function showPeek({ side, timing = 'turn' } = {}) {
   noteStimulus('bear_peek', 'bear', timing);
-  stage.peek({ intensity: theta / THETA_MAX, side });
+  // 出方の大きさも乱数(余白のヒントと同じ確率): ふつう=いろいろな顔の出し方 / レア=小物と一緒 / 激レア=積読の上。
+  // 頻度はθ、大きさは乱数。先触れは無い(予告しないレアは、予告を裏切らない)
+  const rarity = rollTier();
+  if (rarity !== 'normal') report(EventType.EFFECT_SHOWN, { effect_id: `bear_${rarity}` });
+  stage.peek({ intensity: theta / THETA_MAX, side, rarity });
 }
 
 /** @param {{ from?: 'prev'|'now', side?: 'left'|'right', timing?: string }} o */
@@ -1194,6 +1213,7 @@ function maybePageShower() {
 // 別系統の連続的な演出で、Level 0が最も濃く、θの減少とともに自然に薄まる。
 // 「読んでいる状態そのものに薄い報酬が伴う」がこの補助輪の地の部分。
 
+let heraldedIdx = -1; // くまのシルエットを出した激レアの段落(1つの激レアに1回だけ)
 const ambientTimer = AMBIENT.enabled
   ? setInterval(() => {
       if (document.hidden || mode !== 'full' || theta <= 0) return;
@@ -1203,6 +1223,11 @@ const ambientTimer = AMBIENT.enabled
       // 外れ予告は存在しないので、この色替わりは必ず本演出で回収される。
       const fw = approachingRare();
       if (fw) {
+        // 激レアの先触れには、くまのシルエットが余白に一度だけふっと現れる
+        if (fw.tier === 'epic' && margin && heraldedIdx !== fw.idx) {
+          heraldedIdx = fw.idx;
+          margin.herald();
+        }
         if (Math.random() < 0.45) {
           const palette = fw.tier === 'epic' ? 'rainbow' : 'gold';
           if (margin) margin.ambient(palette, 2 + Math.floor(Math.random() * 3));
