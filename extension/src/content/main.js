@@ -818,9 +818,11 @@ function showHint(idx) {
   report(EventType.HINT_SHOWN, { hint_id, kind: 'canned' });
   if (margin) {
     // Play ブックス: 文字のカードは出さない。読んでいる瞬間には動かさない(READING_FX.still)ので、
-    // 余白の飾りとして、めくった瞬間に置く(めくった瞬間でなければ、次にめくるまで取っておく)
-    if (READING_FX.still) queuedHints.push(tier);
-    else margin.hint(tier, theta / THETA_MAX);
+    // 余白の飾りとして、めくった瞬間に置く(めくった瞬間でなければ、次にめくるまで取っておく)。
+    // 散らばる飾り(READING_FX.garden)を止めている間は、ふつうのヒントの花も置かない(読書中の派手さは、よみりんの話が担う)
+    const place = tier !== 'normal' || READING_FX.garden.enabled;
+    if (place && READING_FX.still) queuedHints.push(tier);
+    else if (place) margin.hint(tier, theta / THETA_MAX);
     if (tier !== 'normal') report(EventType.EFFECT_SHOWN, { effect_id: `margin_${tier}` });
     return;
   }
@@ -1356,6 +1358,8 @@ function onAdvance() {
       // θ が低いほど増え方もゆっくり。置き場所が無ければ置かない(本文にかけない)
       if (Math.random() < 0.35 + 0.65 * level) fxLog('飾り', margin.grow(level), margin.itemCount);
     }
+  } else if (story?.state?.step < 0) {
+    fxLog('話', story.advance(level)); // 1コマ目は、最初のめくりで必ず出す(めくり飛ばしでも)
   }
 
   // 予告: レア以上が近づいてくると、めくるたびに静かな印が増える(金の星 → くまの耳 → 虹のかけら)。

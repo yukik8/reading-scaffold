@@ -298,7 +298,7 @@ export const READING_FX = {
   // minPages・fallbackPages・minPageMs は話と章の区切りでも使う
   garden: { enabled: false, minPages: 3, fallbackPages: 12, maxItems: 36, minPageMs: 6_000, bearAt: 5 },
   // Meso・よみりんの小さなストーリー(stories.js・story.js): 画面の右下の角で、無言のくまが一つのものを作り進める。
-  // ちゃんと読んだページをめくるたびに、確率 (minP + (maxP − minP) × θ/8) × 話の進みやすさ で1コマ進む
+  // 1コマ目は最初のめくりで必ず出て、そのあとは、ちゃんと読んだページをめくるたびに、確率 (minP + (maxP − minP) × θ/8) × 話の進みやすさ で1コマ進む
   // (skipP × θ/8 で2コマ)。最後から2つ目のコマで止まって待ち、章の終わりにオチる。章のフィーバーの大きさは溜まった分で決まる
   // (限界まで来ていれば θ/8 のまま、何も溜まっていなければ その minRelease 倍)。見出しの無い本は、待ち始めてから ripePages(乱数の範囲)めくりで自分でオチる
   story: { enabled: true, minP: 0.12, maxP: 0.45, skipP: 0.15, ripePages: [2, 4], minRelease: 0.55 },

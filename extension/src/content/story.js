@@ -3,7 +3,7 @@
 // 原則(2026-10-10・docs/style.md §0):
 //   - 蓄積を一つのオブジェクトに集める。飾りを散らすのではなく、一つのものの状態を大きく変えていく
 //   - 状態が変わるのはめくった瞬間だけ(ふわっと替わって、あとは静止)。読んでいる瞬間には動かさない
-//   - 毎回は進めない(何もない回が続く・ときどき2コマ進む)。進捗バーにしない。何を作っているのかは説明しない
+//   - 1コマ目は最初のめくりで必ず出す。そのあとは毎回は進めない(何もない回が続く・ときどき2コマ進む)。進捗バーにしない。何を作っているのかは説明しない
 //   - 最後から2つ目のコマで止まって待つ。章の終わりに、同じオブジェクトがオチる(蓄積と解放を同じものでつなぐ)。
 //     章が先に終われば、途中のコマのままオチる(たまった分だけの小さな解放)
 //   - 全部を派手な成功にしない: 崩れる・飛んでいく・寝たまま、もある
@@ -87,6 +87,7 @@ export function createStory(Paint, { fx = {} } = {}) {
     const W = innerWidth;
     const H = innerHeight;
     const { w: nw, h: nh } = c.size;
+    if (!nw || !nh) return null; // 絵が読み込めなかった
     let k = SCALE * (0.6 + 0.4 * Math.min(1, Math.max(0, c.level)));
     const side = W - EDGE - (text.right + PAD);
     const below = H - EDGE - (text.bottom + PAD);
@@ -175,8 +176,21 @@ export function createStory(Paint, { fx = {} } = {}) {
     return c;
   }
 
+  // 置けていないときは、絵が読み込めたかと、右と下の余白の幅も返す(開発版の記録で、本物の余白が足りているかを見る)
+  const room = () =>
+    text && { side: Math.round(innerWidth - EDGE - (text.right + PAD)), below: Math.round(innerHeight - EDGE - (text.bottom + PAD)) };
   const state = (c, moved = false) =>
-    c && { id: c.spec.id, name: c.spec.name, step: c.step, frames: c.spec.frames, moved, waited: c.waited, ended: c.ended, shown: !!c.box };
+    c && {
+      id: c.spec.id,
+      name: c.spec.name,
+      step: c.step,
+      frames: c.spec.frames,
+      moved,
+      waited: c.waited,
+      ended: c.ended,
+      shown: !!c.box,
+      ...(c.box ? {} : { loaded: c.size ? c.size.w > 0 : null, room: room() }),
+    };
 
   // ---- オチ ---------------------------------------------------------------------
   // どれも、オブジェクトが動き終わる(か、フィーバーに渡す)まで待つ。フィーバーの幕がそのあとを覆う
@@ -308,7 +322,8 @@ export function createStory(Paint, { fx = {} } = {}) {
     },
 
     /**
-     * ちゃんと読んだページをめくった瞬間に呼ぶ。確率で1コマ(ときどき2コマ)進む。θ が高いほど進みやすく、大きい。
+     * めくった瞬間に呼ぶ(1コマ目がまだなら、どのめくりでも。そのあとは、ちゃんと読んだページだけ)。
+     * 1コマ目は必ず出す。そのあとは確率で1コマ(ときどき2コマ)進む。θ が高いほど進みやすく、大きい。
      * 最後から2つ目のコマで止まって待つ。前の話がオチたあとなら、残っていた物が消えて次の話が始まる(まだ何も見せない)。
      */
     advance(level = 1) {
@@ -321,9 +336,9 @@ export function createStory(Paint, { fx = {} } = {}) {
         c.waited += 1;
         return state(c);
       }
-      // 1コマ目(何も無い所に、最初の物が現れる)は、話の遅さに関係なく出す(遅い話が、章の間ずっと見えないままにならないように)
-      if (Math.random() >= (minP + (maxP - minP) * level) * (c.step < 0 ? 1 : c.pace)) return state(c);
-      c.step = Math.min(limit, c.step + (Math.random() < skipP * level ? 2 : 1));
+      // 1コマ目(何も無い所に、最初の物が現れる)は、最初のめくりで必ず出す(話があることに、すぐ気づけるように)
+      if (c.step >= 0 && Math.random() >= (minP + (maxP - minP) * level) * c.pace) return state(c);
+      c.step = c.step < 0 ? 0 : Math.min(limit, c.step + (Math.random() < skipP * level ? 2 : 1));
       show(c, c.step);
       return state(c, true);
     },
