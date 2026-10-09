@@ -30,32 +30,11 @@
 
   // 本体は本文がそろってから入れる。表紙・挿絵・章の扉で「読む」を押したときは本文がまだ無いか
   // 少なく、その時点で入れると本文を見つけられず計測だけのセッションになる。めくって本文の
-  // ページが出てくるのを待つ(段落3つ・200語 — main.js の本文検出の下限 SESSION に合わせる。
-  // 語はラテン文字なら単語、日本語なら文字で数える)。
-  const PARAGRAPHS = 'reader-rendered-page .main_text > div';
-  const CJK = /[\u3040-\u30ff\u3400-\u9fff\uf900-\ufaff]/g;
-  const countWords = (t) => (t.match(/[A-Za-z0-9]+/g)?.length ?? 0) + (t.match(CJK)?.length ?? 0);
-  const enoughText = () => {
-    let n = 0;
-    let words = 0;
-    for (const p of document.querySelectorAll(PARAGRAPHS)) {
-      const w = countWords(p.textContent ?? '');
-      if (w === 0) continue;
-      n += 1;
-      words += w;
-      if (n >= 3 && words >= 200) return true;
-    }
-    return false;
-  };
-  if (enoughText()) {
-    load('src/content/main.js');
-    return;
-  }
-
+  // ページが出てくるのを待つ。段落の見つけ方と下限(SESSION の段落3つ・200語)は main.js と同じものを使う。
   let timer = 0;
-  const observer = new MutationObserver(() => {
-    if (!timer) timer = setTimeout(check, 400);
-  });
+  let observer = null;
+  let enough = null; // book-text.js を読み込んだら、本文が十分あるかの判定
+  let gaveUp = false;
   const onMessage = (msg) => {
     if (msg?.type === 'rs_stop') giveUp();
   };
@@ -65,12 +44,12 @@
       giveUp(); // 拡張が更新・再読み込みされた
       return;
     }
-    if (!enoughText()) return;
+    if (!enough()) return;
     done();
     load('src/content/main.js');
   }
   function done() {
-    observer.disconnect();
+    observer?.disconnect();
     clearTimeout(timer);
     removeEventListener('pagehide', giveUp);
     try {
@@ -81,10 +60,22 @@
   }
   // セッションが本文の前に終わった: 何も入れずに畳み、次の開始で入れ直せるようにする
   function giveUp() {
+    gaveUp = true;
     done();
     window.__readingScaffoldLoaded = false;
   }
-  observer.observe(document.documentElement, { childList: true, subtree: true });
   chrome.runtime.onMessage.addListener(onMessage);
   addEventListener('pagehide', giveUp, { once: true });
+  Promise.all([load('src/content/book-text.js'), load('src/shared/config.js')]).then(
+    ([{ enoughBookText }, { SESSION }]) => {
+      if (gaveUp) return;
+      enough = () => enoughBookText(SESSION);
+      observer = new MutationObserver(() => {
+        if (!timer) timer = setTimeout(check, 400);
+      });
+      observer.observe(document.documentElement, { childList: true, subtree: true });
+      check();
+    },
+    giveUp,
+  );
 })();

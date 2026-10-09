@@ -53,6 +53,14 @@ function bake(key, size, draw) {
   return s;
 }
 
+/**
+ * 余白に静かに置く形(焼いたもの)。kind は 'flower'(花)か 'star'(星)。{ cv, size } を返す。
+ * cv は size の2倍の大きさで焼いてある。舞わせずに DOM に置く(margin.js の余白の飾り)。
+ */
+export function staticSprite(kind, color) {
+  return kind === 'star' ? sprites.star(color) : sprites.flower(color);
+}
+
 /** 焼いた形を全部捨てる(セッションの終わりに。ページに残るモジュールが画像を抱えたままにしない)。 */
 export function clearSprites() {
   cache.clear();
@@ -154,6 +162,33 @@ const sprites = {
       g.lineJoin = 'round';
       g.lineWidth = 1.8;
       g.strokeStyle = INK;
+      g.stroke();
+    }),
+  // 余白の花: 花びら5枚と黄色い真ん中。舞わずに余白に咲いておく(margin.js が DOM に置く)
+  flower: (color) =>
+    bake(`flower${color}`, 44, (g) => {
+      const path = petalPath(9);
+      for (let i = 0; i < 5; i += 1) {
+        g.save();
+        g.rotate((i / 5) * Math.PI * 2);
+        g.translate(0, -9);
+        wash(g, path, color, 10);
+        path(g);
+        g.lineWidth = 1.1;
+        g.strokeStyle = INK;
+        g.globalAlpha = 0.6;
+        g.stroke();
+        g.restore();
+      }
+      const heart = (c) => {
+        c.beginPath();
+        c.arc(0, 0, 4.6, 0, Math.PI * 2);
+      };
+      wash(g, heart, '#ffd23f', 5);
+      heart(g);
+      g.lineWidth = 1.1;
+      g.strokeStyle = INK;
+      g.globalAlpha = 0.6;
       g.stroke();
     }),
   splat: (color, seed) =>

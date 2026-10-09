@@ -43,13 +43,13 @@ function readPosition() {
     const t = el.textContent;
     if (!t || t.length > 60) continue; // 読み上げ用の文言を含んでも短い
     const m = visibleText(el).match(PAGE_LABEL);
-    if (m) found = { page: Number(m[2] ?? m[1]), total: Number(m[3]) }; // 見開きは後ろのページ
+    if (m) found = { from: Number(m[1]), page: Number(m[2] ?? m[1]), total: Number(m[3]) }; // 見開きは後ろのページ
   }
   if (!found) {
     const slider = document.querySelector('[role="slider"][aria-valuemax]');
     const now = Number(slider?.getAttribute('aria-valuenow'));
     const max = Number(slider?.getAttribute('aria-valuemax'));
-    if (Number.isFinite(now) && max > 0) found = { page: now, total: max };
+    if (Number.isFinite(now) && max > 0) found = { from: now, page: now, total: max };
   }
   if (!found || !(found.total > 0) || found.page < 0 || found.page > found.total) return null;
   return found;
@@ -66,15 +66,26 @@ function send(event, payload) {
 // 読了の判定: 最後のページに、めくって「進んで」着いた瞬間だけ1回報告する。
 // ページ表示が総ページに届いたこと(page === total)を必須にし、直近の移動は小さな前進に限る —
 // 戻ったとき・最後のページで開き直したとき・スライダーや目次で最後へ飛んだときは出さない。
+// 読み終えた画面: 最後のページの次にある「You've just finished」の画面。見開きでは、ページ表示が
+// 「17–20 / 20」(最後の見開き)から「20 / 20」に変わる。読了フィナーレはここで出す(book_end_screen)。
+// 1ページずつの表示では表示が変わらないことがあるので、本文フレームは本文が画面から消えたことでも拾う。
 let last = '';
+let lastLabel = '';
 let lastPage = null;
 let movedForward = false;
 let endReported = false;
+let endScreenReported = false;
 
 function check() {
   const pos = readPosition();
   if (pos) {
     const key = `${pos.page}/${pos.total}`;
+    const label = `${pos.from}-${pos.page}/${pos.total}`;
+    if (endReported && !endScreenReported && label !== lastLabel && lastPage >= pos.total && pos.page >= pos.total) {
+      endScreenReported = true;
+      send('book_end_screen', pos);
+    }
+    lastLabel = label;
     if (key !== last) {
       last = key;
       if (lastPage !== null) {

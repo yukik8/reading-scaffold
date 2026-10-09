@@ -55,6 +55,19 @@
         box-shadow: 0 6px 18px rgba(79, 58, 44, 0.08);
         padding: 14px 16px 16px;
         font-size: 13px;
+        max-height: calc(100vh - 64px);
+        overflow: auto;
+      }
+      .panel h2 {
+        margin: 16px 0 6px;
+        font-size: 13px;
+        font-weight: 700;
+      }
+      .check {
+        display: flex !important;
+        gap: 6px;
+        align-items: center;
+        color: var(--ink) !important;
       }
       .panel h1 {
         margin: 0 0 10px;
@@ -147,7 +160,6 @@
         <button id="peek" type="button">くまが顔を出す(ふつう)</button>
         <button id="peek-rare" type="button">くまが顔を出す(レア)</button>
         <button id="peek-epic" type="button">くまが顔を出す(激レア)</button>
-        <button id="herald" type="button">激レアの先触れ(シルエット)</button>
         <button id="trivia" type="button">うんちく</button>
         <button id="quiz" type="button">クイズ(正解を押すとフィーバー)</button>
         <select id="variant" aria-label="大当たりの出し方">
@@ -159,6 +171,22 @@
         <button id="tornado" type="button">読了フィナーレ(つむじ風)</button>
         <button id="shower" type="button">めくった瞬間の花びら</button>
       </div>
+      <h2>読書中の派手さ(Micro・Meso・Macro)</h2>
+      <label class="check"><input id="flash-always" type="checkbox" checked /> めくりの光を毎回出す(試写用)</label>
+      <label for="story">よみりんの話(右下の角)</label>
+      <select id="story" aria-label="よみりんの話">
+        <option value="">おまかせ(章ごとに乱数)</option>
+      </select>
+      <div class="tier" id="story-state"></div>
+      <div class="buttons">
+        <button id="advance" type="button">めくる(1ページ読んだ)</button>
+        <button id="advance5" type="button">5ページめくる</button>
+        <button id="story-limit" type="button">話を限界(最後から2つ目のコマ)まで進める</button>
+        <button id="premo-rare" type="button">予告を仕込む: レア(3めくりで当たり)</button>
+        <button id="premo-epic" type="button">予告を仕込む: 激レア(5めくりで当たり)</button>
+        <button id="chapter" type="button">章の終わり(Macro)</button>
+      </div>
+      <p class="hint">めくるたびに、右下の角のよみりんの話が確率で1コマ進み(何もない回もある)、縁の色が少しずつ育ちます(読んでいる間は動きません)。話は最後から2つ目のコマで止まって待ちます。予告は話の近くに、金の星 → くまの耳 → 虹のかけら。章の終わりで話がオチて(弾ける・崩れる・飛んでいく・仕上がる・寝たまま…)「章 読了!!」。h キーでこのパネルを隠せます。</p>
       <p class="hint">θ が 6.4 以上で打ち上げ(クイズは半分の確率でつむじ風)、4.4 以上で大ジャンプ、2.8 以上でぴょんぴょん、それ未満は寝そべって読むだけ。θ=0 では何も出ません。コマ止めで止まった画面は、どこかを押すと解除されます。</p>
     </aside>
 

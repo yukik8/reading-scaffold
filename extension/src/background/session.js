@@ -542,6 +542,16 @@ async function onReportImpl(event, payload, sender) {
       }
       break;
 
+    case 'book_end_screen':
+      // 最後のページの次の「読み終えた」画面に進んだ。読了フィナーレはここで出す(記録は book_end のまま)
+      if (session.site !== 'play_books' || !session.book_end_at) return;
+      try {
+        await chrome.tabs.sendMessage(session.tab_id, { type: 'rs_book_end_screen' });
+      } catch {
+        /* 本文フレームが応答しなければ、本文が消えたことで拾う */
+      }
+      break;
+
     case EventType.PAGE_READ: {
       // 読む速さの標本: めくる直前まで見えていたページの語数と滞在時間
       const words = Number(payload.words);

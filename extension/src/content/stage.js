@@ -162,6 +162,8 @@ canvas.paint { position: absolute; inset: 0; width: 100%; height: 100%; pointer-
 .actor img { position: absolute; left: 50%; bottom: 0; height: auto; transform: translateX(-50%); opacity: 0; user-select: none; }
 .actor img.on { opacity: 1; }
 .actor .idle { position: absolute; inset: 0; }
+/* 端に置いたままの話の絵(寝床で寝ているくまなど)。幕の上に、元の場所のまま重ねる */
+.aside { position: absolute; height: auto; pointer-events: none; user-select: none; }
 .actor.resting .idle { animation: idle 2.4s ease-in-out infinite; }
 .actor.waving .idle { animation: wave 1.1s ease-in-out infinite; transform-origin: 50% 100%; }
 @keyframes idle { 50% { transform: translateY(-3px) } }
@@ -678,7 +680,7 @@ export function createStage({ Paint, bearImg }) {
     const rays = root.querySelector('.rays');
     const rainbow = root.querySelector('.rainbow');
     paint.motion = amp;
-    if (kind === 'finale') wrap.style.setProperty('--veil', String([0.35, 0.6, 0.85, 1][tier - 1]));
+    if (kind !== 'win') wrap.style.setProperty('--veil', String([0.35, 0.6, 0.85, 1][tier - 1]));
     await actor.ready;
     if (modal !== layer) return 0;
 
@@ -697,7 +699,7 @@ export function createStage({ Paint, bearImg }) {
       paint.ribbons(W, H, 5);
       paint.fireworks(W, H, 3 + Math.round(3 * amp));
     };
-    // 締めの絵: 読了だけ旗を振る(クイズ正解と見分けがつくように)。正解は何事もなかったように本を開く
+    // 締めの絵: 本の読了だけ旗を振る(クイズ正解・章の終わりと見分けがつくように)。ほかは何事もなかったように本を開く
     const endPose = kind === 'finale' ? 'flag' : 'back';
     const smallWord = (fontSize) => word && smallText(layer, word, { x: cx + size * 0.62, y: H - size * 0.95, size: fontSize });
     const land = (t) => [
@@ -732,7 +734,7 @@ export function createStage({ Paint, bearImg }) {
     };
 
     let script;
-    variant ??= kind === 'finale' || Math.random() < 0.5 ? 'launch' : 'tornado';
+    variant ??= kind !== 'win' || Math.random() < 0.5 ? 'launch' : 'tornado';
     // 大当たり(クイズの段4)の打ち上げは、くるくるの代わりに虹に乗って回る
     const ride = kind === 'win';
     if (tier === 4 && variant === 'launch') {
@@ -952,8 +954,14 @@ export function createStage({ Paint, bearImg }) {
     addEventListener('keydown', layer.onKey, true);
   }
 
-  /** 読了フィナーレ: くまが打ち上がって天井にぶつかり、虹と本の帯の「読了!!」、落ちてきて本を開く。 */
-  async function finale({ intensity = 1, words = true, glyphs = [], variant, onClose } = {}) {
+  /**
+   * 読了フィナーレ: くまが打ち上がって天井にぶつかり、虹と本の帯の「読了!!」、落ちてきて旗を振る。
+   * chapter を渡すと章の終わり(Macro): 帯は「〇〇 読了!!」(label が無ければ「章 読了!!」)、締めは本を開く。
+   * chapter.label が null なら、見出しの分からない区切り(ページ数)なので帯に言葉を出さない。
+   * bear: false ならくまは出さない(光・虹・帯・紙吹雪だけ)。aside { src, left, top, width } は、
+   * 画面の端に置いたままの話の絵(寝床で寝ているくま)を幕の上に重ねる — 読了にも気づかずに寝ている。
+   */
+  async function finale({ intensity = 1, words = true, glyphs = [], variant, chapter = null, bear = true, aside = null, onClose } = {}) {
     closeModal();
     dismissCorner();
     const amp = ampOf(intensity);
@@ -975,12 +983,13 @@ export function createStage({ Paint, bearImg }) {
        </svg>
        <canvas class="paint"></canvas>
        <div class="obi"><span class="word"></span></div>
-       <div class="sr" role="status" aria-label="読了"></div>`,
+       <div class="sr" role="status" aria-label="${chapter ? '章 読了' : '読了'}"></div>`,
     );
     layer.wrap.style.pointerEvents = 'auto';
     layer.onClose = onClose;
     modal = layer;
-    const word = words ? (tier >= 3 ? '読了!!' : tier === 2 ? '読了!' : '読了') : tier >= 3 ? '' : null;
+    const base = chapter ? (chapter.label === null ? null : `${chapter.label ? `${chapter.label} ` : '章 '}読了`) : '読了';
+    const word = words && base ? (tier >= 3 ? `${base}!!` : tier === 2 ? `${base}!` : base) : tier >= 3 && base ? '' : null;
     layer.wrap.addEventListener('click', closeModal);
     layer.onKey = (e) => {
       if (e.key !== 'Escape') return;
@@ -989,8 +998,53 @@ export function createStage({ Paint, bearImg }) {
       e.stopPropagation();
     };
     addEventListener('keydown', layer.onKey, true);
-    const settle = await fever(layer, makeActor(layer), { kind: 'finale', amp, word, glyphs, variant });
-    if (modal === layer) layer.autoClose = setTimeout(() => modal === layer && closeModal(), settle + (tier >= 3 ? 2_200 : 1_600));
+    if (aside) {
+      const img = document.createElement('img');
+      img.className = 'aside';
+      img.src = aside.src;
+      img.alt = '';
+      img.style.cssText = `left:${aside.left}px; top:${aside.top}px; width:${aside.width}px`;
+      layer.root.querySelector('canvas.paint').before(img);
+    }
+    const actor = makeActor(layer);
+    if (!bear) actor.el.style.visibility = 'hidden';
+    const settle = await fever(layer, actor, { kind: chapter ? 'chapter' : 'finale', amp, word, glyphs, variant });
+    // 章の終わりは数秒で「スン…」と本に戻る(本の読了は少し長く見せる)
+    const hold = chapter ? (tier >= 3 ? 1_400 : 1_000) : tier >= 3 ? 2_200 : 1_600;
+    if (modal === layer) layer.autoClose = setTimeout(() => modal === layer && closeModal(), settle + hold);
+  }
+
+  /**
+   * 激レアの当たり: くまが下から画面を斜めに駆け抜けて、上へ消える(約0.7秒)。めくった瞬間に出す。
+   * 画面は覆わない(幕なし・操作は素通し)。θ が低い(段1)ときは出さない。
+   */
+  async function flyby({ intensity = 1 } = {}) {
+    const amp = ampOf(intensity);
+    if (modal || tierOf(amp) < 2 || reducedMotion()) return;
+    const layer = mount('flyby', amp, '<canvas class="paint"></canvas>');
+    layer.wrap.style.pointerEvents = 'none';
+    const actor = makeActor(layer);
+    await actor.ready;
+    if (!layer.host.isConnected) return;
+    const W = innerWidth;
+    const H = innerHeight;
+    const { size } = actor;
+    const fromLeft = Math.random() < 0.5;
+    const x0 = fromLeft ? W * 0.12 : W * 0.88 - size;
+    const x1 = fromLeft ? W * 0.62 - size / 2 : W * 0.38 - size / 2;
+    const at = (u) => ({ x: x0 + (x1 - x0) * u + size / 2, y: H + 10 - (H + size * 1.6) * u + size / 2 });
+    play(layer, actor, [
+      { t: 0, x: x0, y: H + 10, pose: 'launch', sx: 0.82, sy: 1.25, rot: fromLeft ? 12 : -12, ease: 'cubic-bezier(.3, .1, .7, 1)', fx: () => streaks(layer, x0 + size / 2, H, size * 0.4, 7) },
+      { t: 700, x: x1, y: -size * 1.6 },
+    ]);
+    // 通ったあとに、すぐ消える絵の具の粒を残す(新しいページを読み始める頃には消えている)
+    for (const u of [0.25, 0.45, 0.65]) {
+      layer.timers.push(setTimeout(() => {
+        const p = at(u);
+        layer.paint.scatter(p.x, p.y, { count: 8, kinds: ['drop'], speed: 260 });
+      }, 700 * u));
+    }
+    layer.autoClose = setTimeout(() => unmount(layer), 1_600);
   }
 
   return {
@@ -998,6 +1052,7 @@ export function createStage({ Paint, bearImg }) {
     trivia,
     quiz,
     finale,
+    flyby,
     pageShower,
     dismissCorner,
     close() {

@@ -21,6 +21,7 @@ const {
   QUIZ,
   PAGE_EVENTS,
   PAGE_SHOWER,
+  READING_FX,
   FORESHADOW,
   CEILING,
   PAGE_CURL,
@@ -32,10 +33,11 @@ const {
 const { difficultyOf, weightedSample } = await mod('src/content/difficulty.js');
 const { createOverlay, setTextColumn, setDemoTheta, setDemoEnabled } =
   await mod('src/content/overlay.js');
-const { Paint, clearSprites } = await mod('src/content/paint.js');
+const { Paint, clearSprites, staticSprite } = await mod('src/content/paint.js');
 const { bearImg, bearURL } = await mod('src/content/bear.js');
 const { createStage } = await mod('src/content/stage.js');
 const { createMargin } = await mod('src/content/margin.js');
+const { createStory } = await mod('src/content/story.js');
 const { createPageCurl } = await mod('src/content/pagecurl.js');
 
 // デモモードの現在値(プロフィールごと・既定OFF)。セッション開始時にSWから受け取る。
@@ -45,35 +47,21 @@ const { pickHint } = await mod('src/content/hints.js');
 
 // ---- 本文検出(読み取り専用) --------------------------------------------
 
-// 語数の見積もり: ラテン文字は空白区切り、CJKは文字数で数える。
-function countParts(text) {
-  const latin = text.match(/[A-Za-z0-9]+(?:[''-][A-Za-z0-9]+)*/g)?.length ?? 0;
-  const cjk = text.match(/[぀-ヿ㐀-鿿豈-﫿]/g)?.length ?? 0;
-  return { latin, cjk };
-}
+// 語数の見積もり(ラテン文字は単語、CJKは文字)と、Play ブックスの段落の見つけ方は book-text.js
+// (loader.js と同じ判定を使う)。
+const { countParts, countWords, bookParagraphs, bookTextOf } = await mod('src/content/book-text.js');
 
-function countWords(text) {
-  const { latin, cjk } = countParts(text);
-  return latin + cjk;
-}
-
-// Google Play ブックス: 本文は books.googleusercontent.com のフレームの中にあり、
-// ページは reader-rendered-page、段落は .main_text 直下の div(縦書き・ルビあり)。
+// Google Play ブックス: 本文は books.googleusercontent.com のフレームの中にある。
 const PLAY_BOOKS = location.hostname === 'books.googleusercontent.com';
-const PLAY_BOOKS_PARAGRAPHS = 'reader-rendered-page .main_text > div';
 
-// 段落の本文。Play ブックスはルビの振り仮名(rt)を除く — 除かないとクイズや問いに
-// 「馬車屋ばしゃや」のような文が渡る。
+// 段落の本文。Play ブックスはルビの振り仮名を除く(book-text.js)。
 function textOf(el) {
-  if (!PLAY_BOOKS) return el.innerText ?? '';
-  const clone = el.cloneNode(true);
-  for (const n of clone.querySelectorAll('rt, rp')) n.remove();
-  return (clone.textContent ?? '').replace(/\s+/g, ' ').trim();
+  return PLAY_BOOKS ? bookTextOf(el) : (el.innerText ?? '');
 }
 
 // Readability相当の簡易版: article/main配下を優先し、一定長以上の<p>を本文段落とみなす。
 // 失敗したら「計測のみ」モード(段落可視の条件を外し、操作の有無だけで読書時間を数える)。
-// Play ブックスは段落の構造が決まっているので、空でない段落をすべて本文とする
+// Play ブックスは book-text.js が見つけた段落のうち、空でないものをすべて本文とする
 // (先読みされた画面外のページも含め、どれが見えているかは可視の監視で判定する)。
 function detectParagraphs() {
   let paragraphs;
@@ -81,7 +69,7 @@ function detectParagraphs() {
     // 同じページが作り直された要素で何度も DOM に残るので、本文の文字列で1回ずつに絞る
     const seen = new Set();
     paragraphs = [];
-    for (const p of document.querySelectorAll(PLAY_BOOKS_PARAGRAPHS)) {
+    for (const p of bookParagraphs()) {
       const key = textOf(p);
       if (countWords(key) === 0 || seen.has(key)) continue;
       seen.add(key);
@@ -146,6 +134,7 @@ const idxOf = new WeakMap();
 
 const observer = new IntersectionObserver(
   (entries) => {
+    let newlySeen = 0;
     for (const e of entries) {
       const idx = idxOf.get(e.target);
       if (idx === undefined) continue;
@@ -158,6 +147,7 @@ const observer = new IntersectionObserver(
         if (!seenSet.has(idx)) {
           seenSet.add(idx);
           seenOrder.push(idx);
+          newlySeen += 1;
         }
         // 作り直された要素のうち、いま見えている方を段落の代表にする(光の枠・余白の計算用)
         if (PLAY_BOOKS) paragraphs[idx] = e.target;
@@ -175,7 +165,11 @@ const observer = new IntersectionObserver(
       }
     }
     // Play ブックスはページ送りで本文の位置が変わるので、見えている段落から余白を測り直す
-    if (PLAY_BOOKS) scheduleTextColumn();
+    if (PLAY_BOOKS) {
+      scheduleTextColumn();
+      if (newlySeen > 0) noteFlip('seen'); // 初めての段落が見えた = めくって先へ進んだ(読書中の派手さ)
+      if (finalePending) maybeFinaleAtEndScreen();
+    }
   },
   { threshold: 0.1 },
 );
@@ -192,6 +186,8 @@ paragraphs.forEach((p, i) => {
 
 // Play ブックスの余白の小さな演出(margin.js)。オーバーレイの後で作る(下の「余白の演出」)
 let margin = null;
+// よみりんの小さなストーリー(story.js)。画面の右下の角で、めくるたびに少しずつ進み、章の終わりにオチる
+let story = null;
 // いま見えている本文の枠(くまの置き場所を決めるのに使う)
 let textRect = null;
 
@@ -216,6 +212,7 @@ function updateTextColumn() {
   textRect = rect;
   setTextColumn(rect);
   margin?.setText(rect);
+  story?.setText(rect);
 }
 
 let textColumnQueued = false;
@@ -328,6 +325,7 @@ function pacedFireAt(words, total, est) {
  */
 function bearSide(progress) {
   const coin = () => (Math.random() < 0.5 ? 'left' : 'right');
+  if (story?.rect) return 'left'; // 右下の角には、よみりんの話がある
   if (textRect) {
     const w = Math.min(innerWidth * 0.36, 150);
     const h = w * 1.05;
@@ -394,6 +392,7 @@ const listeners = [
   ['scroll', onScroll, { passive: true }],
   ['wheel', markInteraction, { passive: true }],
   ['keydown', markInteraction, { passive: true }],
+  ['keydown', onFlipKey, { passive: true }],
   ['pointerdown', markInteraction, { passive: true }],
   ['touchmove', markInteraction, { passive: true }],
 ];
@@ -414,6 +413,9 @@ function isReading() {
 
 let localReadMs = 0; // ヒント文面用のローカル概算(正はSW側)
 let forewarnTicks = 0; // 先触れが続いたdwell tick数(発火保証用)
+let premonition = null; // 予告中のレア以上 { idx, tier, step }(READING_FX.premonition)
+const queuedHints = []; // めくるまで取っておく余白のヒント(READING_FX.still)
+let macroUntil = 0; // 章の終わりのフィーバー(Macro)の間は、クイズやくまを割り込ませない
 let readMsSinceStimulus = 0; // 最後の演出からの実読書時間(天井用)
 
 const dwellTimer = setInterval(() => {
@@ -481,7 +483,11 @@ const overlayStartedAt = Date.now();
 // ---- 余白の演出(Play ブックス) --------------------------------------------
 // 普段の小さな演出(地のきらきら・ヒント・金/虹のレア)は、本文の枠の外にだけ描く。
 if (PLAY_BOOKS && mode === 'full') {
-  margin = createMargin(Paint, { bearURL });
+  margin = createMargin(Paint, { bearURL, staticSprite, fx: READING_FX });
+  if (READING_FX.story.enabled) {
+    story = createStory(Paint, { fx: READING_FX.story });
+    story.begin();
+  }
   updateTextColumn();
 }
 
@@ -641,7 +647,7 @@ function adoptNewParagraphs() {
   adoptTimer = null;
   const added = [];
   let words = 0;
-  for (const p of document.querySelectorAll(PLAY_BOOKS_PARAGRAPHS)) {
+  for (const p of bookParagraphs()) {
     if (idxOf.has(p)) continue;
     const key = textOf(p);
     const w = countWords(key);
@@ -678,12 +684,12 @@ function watchNewPages() {
  * 先触れの対象: 未読の近い範囲(aheadParagraphs)にレア以上が待っているか。
  * あれば {idx, tier}。虹(epic)優先。
  */
-function approachingRare() {
+function approachingRare(ahead = FORESHADOW.aheadParagraphs) {
   let best = null;
   for (const idx of pendingHintAt) {
     const tier = pendingTierAt.get(idx);
     if (tier !== 'rare' && tier !== 'epic') continue;
-    if (idx <= maxDepthIdx || idx > maxDepthIdx + FORESHADOW.aheadParagraphs) continue;
+    if (idx <= maxDepthIdx || idx > maxDepthIdx + ahead) continue;
     if (tier === 'epic') return { idx, tier };
     best = { idx, tier };
   }
@@ -797,6 +803,7 @@ function showHint(idx) {
   const tier = pendingTierAt.get(idx) ?? rollTier();
   pendingHintAt.delete(idx);
   pendingTierAt.delete(idx);
+  if (premonition?.idx === idx) premonition = null;
   forewarnTicks = 0;
   readMsSinceStimulus = 0;
   lastHintAt = Date.now();
@@ -810,8 +817,10 @@ function showHint(idx) {
   });
   report(EventType.HINT_SHOWN, { hint_id, kind: 'canned' });
   if (margin) {
-    // Play ブックス: 文字のカードは出さず、余白で花が咲く(レアは金の花、激レアは虹の帯)
-    margin.hint(tier, theta / THETA_MAX);
+    // Play ブックス: 文字のカードは出さない。読んでいる瞬間には動かさない(READING_FX.still)ので、
+    // 余白の飾りとして、めくった瞬間に置く(めくった瞬間でなければ、次にめくるまで取っておく)
+    if (READING_FX.still) queuedHints.push(tier);
+    else margin.hint(tier, theta / THETA_MAX);
     if (tier !== 'normal') report(EventType.EFFECT_SHOWN, { effect_id: `margin_${tier}` });
     return;
   }
@@ -1022,12 +1031,12 @@ function dropStale() {
  * 同じめくりで両方当たればクイズを優先する。作れていないもの(ストックなし)は抽選しない。
  */
 function maybePageEvent() {
-  if (!EVENTS_ON || stopped || theta <= 0 || stage.modalOpen) return;
+  if (!EVENTS_ON || stopped || theta <= 0 || stage.modalOpen || Date.now() < macroUntil) return;
   dropStale();
   if (pageTurns <= PAGE_EVENTS.minTurns) return;
   const now = Date.now();
   const scale = Math.min(1, theta / THETA_MAX) * (demoEnabled ? 2 : 1);
-  const later = (fn) => setTimeout(() => !stopped && fn(), PAGE_EVENTS.delayMs);
+  const later = (fn) => setTimeout(() => !stopped && !stage.modalOpen && Date.now() >= macroUntil && fn(), PAGE_EVENTS.delayMs);
 
   const q = PAGE_EVENTS.quiz;
   if (stock.quiz && now - lastQuizAt >= q.minGapMs && Math.random() < q.maxP * scale) {
@@ -1179,9 +1188,37 @@ function showQuiz({ quiz, text }) {
   });
 }
 
-// 最後のページに進んで着いた瞬間の読了フィナーレ(Play ブックス・1セッション1回)。
+// 読了フィナーレ(Play ブックス・1セッション1回)。最後のページに進んで着いたあと(rs_book_end)、
+// その次の「読み終えた」画面(You've just finished)に進んだ瞬間に出す。最後のページを読んでいる途中には出さない。
+// 拾い方は2つ: ページ表示が「17–20 / 20」→「20 / 20」に変わった(rs_book_end_screen)か、本文が画面から消えた。
 // 大きさはθに比例し、θ=0では出さない — 卒業後は静かに読み終える。
 let finaleShown = false;
+let finalePending = false; // 最後のページに着いた。次の「読み終えた」画面を待っている
+let finaleCheck = 0;
+
+/** 本文の段落が、いま画面の中に見えているか(読み終えた画面では消える)。 */
+function textOnScreen() {
+  for (const i of visible) {
+    const p = paragraphs[i];
+    if (!p?.isConnected) continue;
+    const r = p.getBoundingClientRect();
+    if (r.width > 0 && r.height > 0 && r.right > 0 && r.left < innerWidth && r.bottom > 0 && r.top < innerHeight) return true;
+  }
+  return false;
+}
+
+/** 最後のページのあと、本文が画面から消えた状態が0.6秒続いたら、読み終えた画面に進んだとみなす。 */
+function maybeFinaleAtEndScreen() {
+  if (!finalePending || finaleShown || finaleCheck) return;
+  if (textOnScreen()) return;
+  finaleCheck = setTimeout(() => {
+    finaleCheck = 0;
+    if (finalePending && !textOnScreen()) {
+      finalePending = false;
+      showBookFinale();
+    }
+  }, 600);
+}
 function showBookFinale() {
   if (!PLAY_BOOKS || stopped || finaleShown || theta <= 0) return;
   finaleShown = true;
@@ -1189,12 +1226,201 @@ function showBookFinale() {
   lastBearAt = Date.now();
   readMsSinceStimulus = 0;
   report(EventType.EFFECT_SHOWN, { effect_id: 'book_finale' });
+  // Macro: よみりんの話がオチて、余白の飾りと縁の光が吸い込まれてから、フィーバーへ(寝床の話は寝たまま、くま抜き)。
+  // 本の読了の大きさは、話に溜まった分に関係なく θ のまま
+  const go = ({ aside = null } = {}) =>
+    stage.finale({
+      intensity: theta / THETA_MAX,
+      words: PAGE_EVENTS.words,
+      glyphs: glyphsFromReading(),
+      bear: !aside,
+      aside,
+      onClose: markInteraction,
+    });
+  if (margin && READING_FX.still) {
+    Promise.all([story ? story.ending() : {}, margin.collapse()]).then(([release]) => go(release));
+  } else go();
+}
+
+// ---- 読書中の派手さ(READING_FX): Micro / Meso / Macro ----------------------------
+//
+// 読んでいる瞬間には動かさない。動かすのは、めくって新しいページへ進んだ瞬間(目が文章から離れている間)だけ。
+//   Micro … めくりの光(抽選・めくっている間に終わる)
+//   Meso  … 右下の角のよみりんの話が確率で1コマ進み、縁の光が少し育つ(静止。手が止まっても減らない)。予告の印は話の近くに
+//   Macro … 章の終わり(めくった先が章の始まり)で、話がオチて余白が吸い込まれ、フィーバー「章 読了!!」
+// めくった合図は3つの入口から拾い、いちばん早く届いたもので1回だけ動く(同じめくりは二重に数えない):
+//   seen … 初めての段落が見えた(本文フレームの中・IntersectionObserver)
+//   turn … SW からの rs_page_turn(タブの URL の変化。新しいページが出たあとに届くことがある)
+//   key  … めくりのキー(矢印・PageUp/Down・スペース)
+// 段落の番号は読み込んだ順に振るので、本の順と一致するとは限らない(最深段落の増加では拾わない)。
+
+let cyclePages = 0; // 前の章の区切りから読んだページ(余白の飾りと縁の光が育つ)
+let lastAdvanceAt = Date.now();
+let advanceTimer = 0;
+let flipAt = 0; // いまのめくりを拾った時刻
+let seenBatches = 0; // 「初めての段落が見えた」の回数(最初の1回は開いたときのもの)
+let headingSeen = false; // この本で見出しを見つけたか(見つからない本は fallbackPages ごとに区切る)
+let chapterTitle = ''; // いまの章の見出し(短ければ「〇〇 読了!!」に使う)
+let lastTurnFlashAt = 0;
+let bearPlaced = false; // 余白で一緒に読むくま(章ごとに一度)
+
+/** 開発版だけ: 読書中の派手さの動きをコンソールに残す(本物の Play ブックスで確かめる用)。 */
+function fxLog(...args) {
+  if (!IS_STORE_BUILD) console.info('[よみりん演出]', ...args);
+}
+
+/**
+ * めくった合図(source: 'seen' | 'turn' | 'key')。めくりの光はすぐ(めくっている間に)、
+ * 余白の飾り・章の区切りは新しいページの段落が見えてから(0.7秒後)。
+ */
+function noteFlip(source) {
+  if (!PLAY_BOOKS || !margin || stopped || mode !== 'full') return;
+  if (source === 'seen' && seenBatches++ === 0) return; // 開いたときに見えた段落
+  const now = Date.now();
+  if (now - overlayStartedAt < 2_000) return; // 開いた直後はめくりではない
+  if (now - flipAt < 1_200) return; // 同じめくり(入口が複数ある)
+  flipAt = now;
+  fxLog('めくり', source);
+  if (theta > 0) maybeTurnFlash(theta / THETA_MAX); // Micro: めくっている間に
+  clearTimeout(advanceTimer);
+  advanceTimer = setTimeout(onAdvance, 700);
+}
+
+function onFlipKey(e) {
+  if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', ' '].includes(e.key)) noteFlip('key');
+}
+
+/**
+ * 章の始まりらしい見出しの文字(無ければ '')。いま見えている最初の段落が、見出し(h1〜h3)か、
+ * 本文より字が大きい短い行か。Play ブックスの本文の作りは本ごとに違うので目安。
+ */
+function chapterHeading() {
+  const shown = [...visible].sort((a, b) => a - b);
+  if (shown.length === 0) return '';
+  const sizeOf = (el) => {
+    let max = parseFloat(getComputedStyle(el).fontSize) || 0;
+    for (const c of el.querySelectorAll('*')) {
+      if (c.closest('rt')) continue;
+      max = Math.max(max, parseFloat(getComputedStyle(c).fontSize) || 0);
+    }
+    return max;
+  };
+  const sizes = shown.map((i) => (paragraphs[i] ? sizeOf(paragraphs[i]) : 0)).filter((v) => v > 0).sort((a, b) => a - b);
+  const median = sizes[Math.floor(sizes.length / 2)] || 16;
+  for (const i of shown.slice(0, 2)) {
+    const p = paragraphs[i];
+    if (!p) continue;
+    const t = textOf(p);
+    if (!t || t.length > 30) continue;
+    if (p.matches('h1, h2, h3') || p.querySelector('h1, h2, h3') || sizeOf(p) >= median * 1.3) return t;
+  }
+  return '';
+}
+
+function onAdvance() {
+  advanceTimer = 0;
+  if (stopped || mode !== 'full' || !margin || theta <= 0) return;
+  const level = theta / THETA_MAX;
+  const now = Date.now();
+  const read = now - lastAdvanceAt >= READING_FX.garden.minPageMs; // めくり飛ばしでない
+  lastAdvanceAt = now;
+  if (!READING_FX.still || stage.modalOpen) return;
+
+  // Macro: めくった先が章の始まりなら、前の章が終わった
+  const heading = chapterHeading();
+  if (heading) headingSeen = true;
+  const fx = READING_FX.chapter;
+  // 見出しが一度も見つからない本: よみりんの話が限界で何めくりか待ったら、自分でオチる(話が無ければ fallbackPages ごと)
+  const byPages = !headingSeen && (story ? story.ripe : cyclePages >= READING_FX.garden.fallbackPages);
+  if (fx.enabled && (heading || byPages) && cyclePages >= READING_FX.garden.minPages) {
+    // 帯の言葉: 終わった章の見出しが短ければ「〇〇 読了!!」、分からなければ「章 読了!!」。ページ数で区切ったときは言葉なし
+    const label = heading ? (chapterTitle && chapterTitle.length <= 10 ? chapterTitle : '') : null;
+    chapterTitle = heading;
+    chapterMacro(label);
+    return;
+  }
+  if (heading) chapterTitle = heading;
+
+  // めくるまで取っておいた余白のヒント(当たり)を、いま置く
+  flushMarginHints(level);
+
+  // Meso: ちゃんと読んだページごとに、世界が少し育つ
+  fxLog('進んだ', { read, cyclePages, items: margin.itemCount, heading, text: textRect && Math.round(textRect.right - textRect.left) });
+  if (read) {
+    cyclePages += 1;
+    if (READING_FX.glow.enabled) margin.world(cyclePages / READING_FX.glow.fullPages, level);
+    // よみりんの話: 確率で1コマ進む(何もない回もある)。前の話がオチたあとなら、次の話が始まる
+    if (story) fxLog('話', story.advance(level));
+    if (READING_FX.garden.enabled) {
+      if (!bearPlaced && cyclePages >= READING_FX.garden.bearAt) bearPlaced = margin.add('bear', level);
+      // θ が低いほど増え方もゆっくり。置き場所が無ければ置かない(本文にかけない)
+      if (Math.random() < 0.35 + 0.65 * level) fxLog('飾り', margin.grow(level), margin.itemCount);
+    }
+  }
+
+  // 予告: レア以上が近づいてくると、めくるたびに静かな印が増える(金の星 → くまの耳 → 虹のかけら)。
+  // 残りのページ数は示さない。外れ予告は無い(印を置いたレアは、その段落に着けば必ず出る)
+  const fw = READING_FX.premonition.enabled ? approachingRare(premonitionReach()) : null;
+  if (fw) {
+    fxLog('予告', fw.tier, premonition?.step ?? 0);
+    if (premonition?.idx !== fw.idx) premonition = { idx: fw.idx, tier: fw.tier, step: 0 };
+    const seq = fw.tier === 'epic' ? ['gold-star', 'gold-star', 'ears', 'rainbow'] : ['gold-star', 'gold-star'];
+    const kind = seq[premonition.step];
+    if (kind) margin.add(kind, level, { near: story?.rect });
+    premonition.step += 1;
+  }
+}
+
+/** 予告を始める先読みの段落数: いま見えている段落の数 × aheadPages(だいたい何ページ先か)。 */
+function premonitionReach() {
+  return Math.max(FORESHADOW.aheadParagraphs, visible.size * READING_FX.premonition.aheadPages);
+}
+
+/** めくるまで取っておいた余白のヒントを置く。激レアは、くまが画面を駆け抜ける。 */
+function flushMarginHints(level) {
+  while (queuedHints.length) {
+    const tier = queuedHints.shift();
+    margin.hint(tier, level, { still: true, near: story?.rect });
+    if (tier === 'epic' && READING_FX.flyby.enabled) stage.flyby({ intensity: level });
+  }
+}
+
+/**
+ * Macro: 章の終わり。よみりんの話がオチて(弾ける・崩れる・飛んでいく・仕上がる・寝たまま…)、余白の飾りと縁の光が
+ * 吸い込まれて、フィーバー「章 読了!!」。大きさは話に溜まった分で決まる(途中で章が終われば小さめ)。数秒で本に戻る。
+ */
+async function chapterMacro(label) {
+  macroUntil = Date.now() + 3_000; // オチ〜フィーバーが開くまで(開いてからは modalOpen が守る)
+  report(EventType.EFFECT_SHOWN, { effect_id: label === null ? 'chapter_pages' : 'chapter_end' });
+  cyclePages = 0;
+  bearPlaced = false;
+  premonition = null;
+  queuedHints.length = 0;
+  lastHintAt = Date.now();
+  lastBearAt = Date.now();
+  stage.dismissCorner();
+  const [{ progress = 1, aside = null } = {}] = await Promise.all([story?.ending(), margin.collapse()]);
+  if (stopped || stage.modalOpen) return;
+  const min = READING_FX.story.minRelease;
   stage.finale({
-    intensity: theta / THETA_MAX,
+    intensity: (theta / THETA_MAX) * (story ? min + (1 - min) * progress : 1),
     words: PAGE_EVENTS.words,
     glyphs: glyphsFromReading(),
+    chapter: { label },
+    bear: !aside,
+    aside,
     onClose: markInteraction,
   });
+}
+
+function maybeTurnFlash(level) {
+  const fx = READING_FX.turnFlash;
+  if (!fx.enabled || stage.modalOpen) return;
+  const now = Date.now();
+  if (now - lastTurnFlashAt < fx.minGapMs) return;
+  if (Math.random() >= fx.maxP * level) return;
+  lastTurnFlashAt = now;
+  margin.turnFlash(level);
 }
 
 // めくった瞬間の花びら(Play ブックス)。クイズ正解と同じ降り方を、めくるたびに数秒。
@@ -1213,9 +1439,10 @@ function maybePageShower() {
 // 別系統の連続的な演出で、Level 0が最も濃く、θの減少とともに自然に薄まる。
 // 「読んでいる状態そのものに薄い報酬が伴う」がこの補助輪の地の部分。
 
-let heraldedIdx = -1; // くまのシルエットを出した激レアの段落(1つの激レアに1回だけ)
 const ambientTimer = AMBIENT.enabled
   ? setInterval(() => {
+      // 読んでいる瞬間には動かさない(Play ブックス): 地のきらきらは出さない。予告は余白の静かな印で
+      if (margin && READING_FX.still) return;
       if (document.hidden || mode !== 'full' || theta <= 0) return;
       if (!isReading()) return; // 読む手が止まっているときに光らせない
       // 先触れ: 少し先の段落にレア以上が待っているとき、地のきらきらが
@@ -1223,11 +1450,6 @@ const ambientTimer = AMBIENT.enabled
       // 外れ予告は存在しないので、この色替わりは必ず本演出で回収される。
       const fw = approachingRare();
       if (fw) {
-        // 激レアの先触れには、くまのシルエットが余白に一度だけふっと現れる
-        if (fw.tier === 'epic' && margin && heraldedIdx !== fw.idx) {
-          heraldedIdx = fw.idx;
-          margin.herald();
-        }
         if (Math.random() < 0.45) {
           const palette = fw.tier === 'epic' ? 'rainbow' : 'gold';
           if (margin) margin.ambient(palette, 2 + Math.floor(Math.random() * 3));
@@ -1306,6 +1528,7 @@ function stop({ celebrate = false, readMin = 0 } = {}) {
   const teardown = () => {
     overlay.destroy();
     margin?.destroy();
+    story?.destroy();
     clearSprites();
   };
   if (celebrate) {
@@ -1326,6 +1549,8 @@ function onMessage(msg) {
     // Play ブックスのページ送り。送りボタンは最上位のフレームにあり、ここでは操作が見えない
     markInteraction();
     scheduleTextColumn();
+    noteFlip('turn');
+    if (finalePending) setTimeout(maybeFinaleAtEndScreen, 900);
     pageTurns += 1;
     // 読む速さ: めくった直後はまだ前のページが見えているので、その語数と滞在時間を1標本として送る
     {
@@ -1355,7 +1580,13 @@ function onMessage(msg) {
       prefetch('quiz');
     }, 900);
   } else if (msg?.type === 'rs_book_end') {
-    showBookFinale();
+    // 最後のページに着いた。フィナーレは次の「読み終えた」画面に進んでから
+    finalePending = true;
+  } else if (msg?.type === 'rs_book_end_screen') {
+    if (finalePending) {
+      finalePending = false;
+      showBookFinale();
+    }
   } else if (msg?.type === 'rs_theta') {
     // θ手動ダイヤル(ダッシュボード)からの即時反映。
     theta = msg.theta ?? 0;

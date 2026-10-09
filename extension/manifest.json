@@ -21,7 +21,7 @@
   },
   "web_accessible_resources": [
     {
-      "resources": ["src/content/*.js", "src/shared/*.js", "assets/bear/*"],
+      "resources": ["src/content/*.js", "src/shared/*.js", "assets/bear/*", "assets/story/*"],
       "matches": ["https://play.google.com/*", "https://books.googleusercontent.com/*"]
     }
   ]

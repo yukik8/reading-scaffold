@@ -11,7 +11,9 @@
 //   フィーバー  … wait(待機)→ surprise(びっくり)→ jump(ジャンプ開始)→ launch(射出)
 //                 → tumble(くるくる)/ spin(空中で回転・虹)→ fall(落下)→ land(着地)→ back(元に戻る)
 //   小物        … flag(旗)/ mug(マグカップ)/ stack(積読)/ box(箱に入る)/ book(開いた本だけ)
-//   シルエット  … sil-front / sil-lie / sil-sit(激レアの先触れ)
+//   予告        … nyo(にょっ: 画面の下の縁から耳だけ。激レアの予告)
+//   余白の飾り  … fx-leaf / fx-tulip / fx-flower / fx-orange / fx-sprig / fx-blossom / fx-petals(ふだん)、
+//                 fx-star(金の星・予告)/ fx-sparkles(金のきらきら・レアの当たり)— margin.js が置く
 
 export const bearURL = (pose) => new URL(`../../assets/bear/${pose}.webp`, import.meta.url).href;
 
