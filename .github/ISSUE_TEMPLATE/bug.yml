@@ -1,0 +1,53 @@
+name: バグ報告
+description: 期待どおりに動かない
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: 概要
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 再現手順
+      description: 本の種類(青空文庫 / 出版社の本・縦書き / 横書き・見開き)、ページ、θ、操作
+      placeholder: |
+        1. 
+        2. 
+        3. 
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期待する動作
+  - type: textarea
+    id: actual
+    attributes:
+      label: 実際の動作
+  - type: dropdown
+    id: where
+    attributes:
+      label: 発生箇所
+      options:
+        - 本物の Play ブックス
+        - 試写室(tools/preview)
+        - ダッシュボード / popup
+        - サーバ
+    validations:
+      required: true
+  - type: input
+    id: env
+    attributes:
+      label: 環境
+      description: 拡張の版(manifest.json の version)と Chrome の版
+      placeholder: v0.25.0 / Chrome 141
+  - type: textarea
+    id: logs
+    attributes:
+      label: ログ・スクリーンショット
+      description: 開発版はコンソールに `[よみりん演出]` の記録が出る
+      render: text

@@ -1,0 +1,57 @@
+name: 機能要望
+description: 新しい機能や、既存の機能の変更
+title: "[feature] "
+labels: ["feature"]
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: 概要
+      description: 何を、どう変えるか
+    validations:
+      required: true
+  - type: textarea
+    id: motivation
+    attributes:
+      label: 背景・目的
+      description: なぜ必要か。どんな問題を解くか
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 提案する実装
+      description: 設計の文書(docs/plans/xxx.md・docs/design.md の節)へのリンクと、要点
+  - type: dropdown
+    id: category
+    attributes:
+      label: 分類
+      description: docs/design.md §1 の三分法。どれにも属さなければ センサー / 制御 / サーバ / 文書
+      options:
+        - 演出
+        - 記録
+        - 道具
+        - センサー(計測)
+        - 制御(θ)
+        - サーバ
+        - 文書・運用
+    validations:
+      required: true
+  - type: textarea
+    id: impact
+    attributes:
+      label: 影響範囲
+      description: 触るファイル、関係する不変条件(docs/design.md §11 の番号)、文書(design / style / PRIVACY)
+  - type: textarea
+    id: tasks
+    attributes:
+      label: タスク
+      description: 小さく区切る(1つ = 1 PR が目安)
+      value: |
+        - [ ] 
+        - [ ] 
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: 完了条件
+      description: 何をどこで確かめたら閉じるか(試写室 / 本物の Play ブックス / replay / サーバのテスト)
+    validations:
+      required: true

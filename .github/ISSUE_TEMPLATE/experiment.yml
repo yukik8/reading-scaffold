@@ -1,0 +1,37 @@
+name: 検証・実験
+description: 実装の前に測る
+title: "[experiment] "
+labels: ["experiment"]
+body:
+  - type: textarea
+    id: purpose
+    attributes:
+      label: 目的
+      description: 何を明らかにしたいか
+    validations:
+      required: true
+  - type: textarea
+    id: hypothesis
+    attributes:
+      label: 仮説
+  - type: textarea
+    id: criteria
+    attributes:
+      label: 判定基準
+      description: 測る前に数字で決め、あとから動かさない
+      value: |
+        | 指標 | 基準 |
+        |---|---|
+        |  |  |
+    validations:
+      required: true
+  - type: textarea
+    id: method
+    attributes:
+      label: 方法
+      description: 使うもの・時間・条件
+  - type: textarea
+    id: result
+    attributes:
+      label: 結果
+      description: 測ったら書く。判定と、docs/design.md に反映すること
