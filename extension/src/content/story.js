@@ -11,6 +11,8 @@
 //
 // 置き場所: 画面の右下の角。右の余白の帯が広ければ(MIN_SIDE 以上)その下の方、狭ければ下の余白の右寄せ。
 // 本文の枠には決してかけない。入らなければ置かない(話は見えないまま進む)。右下の問いのボタンは避ける。
+// 一度置いたら動かさない(めくっている最中は段落が一瞬消えたり2ページ分が重なったりするので、そのたびに測り直すと点滅する)。
+// 置き直すのは、画面の大きさが変わったときと、落ち着いた本文の枠が話にかかったときだけ。
 // 同じ話のコマは、絵の元の大きさの比のまま同じ倍率で描く(コマが替わっても、くまの大きさがそろう)。
 
 import { STORIES } from './stories.js';
@@ -25,17 +27,20 @@ const FAB = 56; // 右下の問いのボタン(overlay.js の .ask-fab)を避け
 const MIN_SIDE = 90; // 右の余白の帯がこれより広ければ、その下の方に置く
 const MIN_BOTTOM = 64; // 下の余白の帯がこれより高ければ、右寄せで置く
 const MAX_TALL = 0.5; // 右の余白の帯でも、高さは画面のこの割合まで
+const SETTLE = 800; // 本文の枠が変わってから、これだけ落ち着いたら置き場所を確かめる(ミリ秒)
 
 const CSS = `
 canvas.paint { position: fixed; inset: 0; width: 100%; height: 100%; pointer-events: none; }
 .story { position: fixed; pointer-events: none; transform-origin: 50% 100%; transition: opacity .6s ease-out; }
 .story.gone { opacity: 0; }
-/* コマは重ねて置き、めくった瞬間に入れ替える(ふわっと替わって、あとは静止) */
-.story img { position: absolute; bottom: 0; height: auto; opacity: 0; transition: opacity .9s ease-out; user-select: none; }
-.story img.on { opacity: 1; }
-.story.quick img { transition-duration: .3s; }
+/* コマは重ねて置き、めくった瞬間に入れ替える(ふわっと替わって、あとは静止)。新しいコマを上に重ねて出し、
+   前のコマは新しいコマが半分出てから消す(入れ替えの途中で、くまが薄くならないように) */
+.story img { position: absolute; bottom: 0; height: auto; opacity: 0; transition: opacity .45s ease-in .45s; user-select: none; }
+.story img.on { opacity: 1; z-index: 1; transition: opacity .9s ease-out; }
+.story.quick img { transition: opacity .15s ease-in .15s; }
+.story.quick img.on { transition: opacity .3s ease-out; }
 @media (prefers-reduced-motion: reduce) {
-  .story, .story img { transition: none; }
+  .story, .story img { transition: none !important; }
 }
 `;
 
@@ -78,6 +83,8 @@ export function createStory(Paint, { fx = {} } = {}) {
   };
 
   let text = null; // 本文の枠 { left, right, top, bottom }
+  let settle = 0;
+  let viewport = '';
   let lastId = null;
   // いまの話 { spec, step(-1 = まだ何も無い), waited, ripeAt, pace, level, el, imgs, size, box, ended }
   let cur = null;
@@ -110,9 +117,15 @@ export function createStory(Paint, { fx = {} } = {}) {
     return { x: right - w, y: bottom - h, w, h, k };
   }
 
-  function layout() {
+  const overlaps = (b, t) => b.x < t.right + PAD && b.x + b.w > t.left - PAD && b.y < t.bottom + PAD && b.y + b.h > t.top - PAD;
+
+  /** 置き場所を決める。置いてある話は、force でなければ、画面の大きさが変わったか本文の枠がかかったときだけ置き直す。 */
+  function layout(force = false) {
     const c = cur;
     if (!c || !c.size || c.ended) return; // オチたあとは、その場に残す(次の話が始まるまで)
+    const size = `${innerWidth}x${innerHeight}`;
+    if (c.box && !force && size === viewport && !(text && overlaps(c.box, text))) return;
+    viewport = size;
     const box = text ? boxFor(c) : null;
     c.box = box;
     c.el.style.visibility = box ? '' : 'hidden';
@@ -310,10 +323,13 @@ export function createStory(Paint, { fx = {} } = {}) {
   };
 
   return {
-    /** 本文の枠(見えている段落の外接矩形)。null なら本文の位置が分からない=置かない。 */
+    /** 本文の枠(見えている段落の外接矩形)。null(めくっている最中など)なら、前の枠のまま。 */
     setText(rect) {
+      if (!rect) return; // めくっている最中は段落が一瞬消える。そのあいだは前の枠のまま
       text = rect;
-      layout();
+      clearTimeout(settle);
+      if (cur?.box) settle = setTimeout(layout, SETTLE); // 置いてある話は、枠が落ち着いてから確かめる
+      else layout();
     },
 
     /** 話を始める(id を省けば乱数・level は θ/8)。試写室で話を選ぶのにも使う。 */
@@ -329,8 +345,10 @@ export function createStory(Paint, { fx = {} } = {}) {
     advance(level = 1) {
       if (!cur || cur.ended) return state(begin(undefined, level));
       const c = cur;
-      c.level = level;
-      layout();
+      if (c.level !== level) {
+        c.level = level; // θ が変わったときだけ大きさを測り直す(めくるたびには置き直さない)
+        layout(true);
+      }
       const limit = c.spec.frames - 2;
       if (c.step >= limit) {
         c.waited += 1;
@@ -402,6 +420,7 @@ export function createStory(Paint, { fx = {} } = {}) {
 
     destroy() {
       cancelAnimationFrame(raf);
+      clearTimeout(settle);
       host.remove();
     },
   };
